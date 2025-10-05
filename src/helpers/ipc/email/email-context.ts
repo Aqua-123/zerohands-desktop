@@ -22,6 +22,25 @@ export interface EmailContext {
   ) => Promise<void>;
   setupGmailPushNotifications: (userEmail: string) => Promise<void>;
   setupOutlookWebhook: (userEmail: string, webhookUrl: string) => Promise<void>;
+  getInboxEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
+  processAndLabelEmails: (
+    userEmail: string,
+    onEmailProcessed?: (email: EmailThread) => void,
+  ) => Promise<void>;
+  performIncrementalSync: (
+    userEmail: string,
+    maxResults?: number,
+  ) => Promise<{ newEmailsCount: number; totalEmailsCount: number }>;
+  updateMessageLabels: (
+    userEmail: string,
+    messageId: string,
+    labels: string[],
+    operation?: "add" | "remove" | "replace",
+  ) => Promise<{ success: boolean }>;
   onEmailError: (callback: (error: string) => void) => void;
   onNewEmailNotification: (
     callback: (data: { userEmail: string; newEmails: EmailThread[] }) => void,
@@ -69,6 +88,49 @@ const emailContext: EmailContext = {
       EMAIL_CHANNELS.SETUP_OUTLOOK_WEBHOOK,
       userEmail,
       webhookUrl,
+    ),
+  getInboxEmailsFromDB: (userEmail: string, limit?: number, offset?: number) =>
+    ipcRenderer.invoke(
+      EMAIL_CHANNELS.GET_INBOX_EMAILS_FROM_DB,
+      userEmail,
+      limit,
+      offset,
+    ),
+  processAndLabelEmails: (
+    userEmail: string,
+    onEmailProcessed?: (email: EmailThread) => void,
+  ) => {
+    // Set up listener for processed emails if callback provided
+    if (onEmailProcessed) {
+      const listener = (_: unknown, processedEmail: EmailThread) => {
+        onEmailProcessed(processedEmail);
+      };
+      ipcRenderer.on(EMAIL_CHANNELS.NEW_EMAIL_NOTIFICATION, listener);
+    }
+
+    return ipcRenderer.invoke(
+      EMAIL_CHANNELS.PROCESS_AND_LABEL_EMAILS,
+      userEmail,
+    );
+  },
+  performIncrementalSync: (userEmail: string, maxResults?: number) =>
+    ipcRenderer.invoke(
+      EMAIL_CHANNELS.PERFORM_INCREMENTAL_SYNC,
+      userEmail,
+      maxResults,
+    ),
+  updateMessageLabels: (
+    userEmail: string,
+    messageId: string,
+    labels: string[],
+    operation?: "add" | "remove" | "replace",
+  ) =>
+    ipcRenderer.invoke(
+      EMAIL_CHANNELS.UPDATE_MESSAGE_LABELS,
+      userEmail,
+      messageId,
+      labels,
+      operation,
     ),
   onEmailError: (callback) => {
     ipcRenderer.on(EMAIL_CHANNELS.EMAIL_ERROR, (_, error) => callback(error));

@@ -23,21 +23,30 @@ export default function EmailList({
   onCompose,
 }: EmailListProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const loadMoreTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autoLoadIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Infinite scroll logic
+  // Infinite scroll logic - Auto-trigger even if previous load is still in progress
   const handleScroll = useCallback(() => {
-    if (!hasMoreEmails || isLoadingMore || !onLoadMore) return;
+    if (!hasMoreEmails || !onLoadMore) return;
 
     const container = scrollContainerRef.current;
     if (!container) return;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
-    const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100; // 100px threshold
+    const isNearBottom = scrollTop + clientHeight >= scrollHeight - 200; // 200px threshold
+
+    console.log(
+      `[EMAIL_LIST] Scroll check: scrollTop=${scrollTop}, scrollHeight=${scrollHeight}, clientHeight=${clientHeight}, isNearBottom=${isNearBottom}, hasMore=${hasMoreEmails}, isLoading=${isLoadingMore}`,
+    );
 
     if (isNearBottom) {
+      console.log(
+        `[EMAIL_LIST] 🔄 Auto-triggering load more due to scroll (regardless of loading state)`,
+      );
       onLoadMore();
     }
-  }, [hasMoreEmails, isLoadingMore, onLoadMore]);
+  }, [hasMoreEmails, onLoadMore, isLoadingMore]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -46,6 +55,82 @@ export default function EmailList({
     container.addEventListener("scroll", handleScroll);
     return () => container.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
+
+  // Check if we need to load more emails when component mounts or emails change - Auto-trigger regardless of loading state
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || !hasMoreEmails || !onLoadMore) return;
+
+    // Check if the container is not full and we have more emails to load
+    const { scrollHeight, clientHeight } = container;
+    const isNotFull = scrollHeight <= clientHeight;
+
+    console.log(
+      `[EMAIL_LIST] Auto-load check: scrollHeight=${scrollHeight}, clientHeight=${clientHeight}, isNotFull=${isNotFull}, emailsCount=${emails.length}, isLoading=${isLoadingMore}`,
+    );
+
+    if (isNotFull && emails.length > 0) {
+      console.log(
+        `[EMAIL_LIST] 🔄 Auto-triggering load more - container not full (regardless of loading state)`,
+      );
+      onLoadMore();
+    }
+  }, [emails.length, hasMoreEmails, onLoadMore, isLoadingMore]);
+
+  // Continuous auto-load mechanism - keeps loading until container is full or no more emails
+  useEffect(() => {
+    if (!hasMoreEmails || !onLoadMore) {
+      // Clear any existing interval if no more emails
+      if (autoLoadIntervalRef.current) {
+        clearInterval(autoLoadIntervalRef.current);
+        autoLoadIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const checkAndLoadMore = () => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const { scrollHeight, clientHeight } = container;
+      const isNotFull = scrollHeight <= clientHeight + 50; // 50px buffer
+
+      console.log(
+        `[EMAIL_LIST] Continuous check: scrollHeight=${scrollHeight}, clientHeight=${clientHeight}, isNotFull=${isNotFull}, hasMore=${hasMoreEmails}`,
+      );
+
+      if (isNotFull && emails.length > 0) {
+        console.log(`[EMAIL_LIST] 🔄 Continuous auto-load triggered`);
+        onLoadMore();
+      }
+    };
+
+    // Start continuous checking every 500ms
+    autoLoadIntervalRef.current = setInterval(checkAndLoadMore, 500);
+
+    // Also check immediately
+    checkAndLoadMore();
+
+    // Cleanup interval on unmount or when dependencies change
+    return () => {
+      if (autoLoadIntervalRef.current) {
+        clearInterval(autoLoadIntervalRef.current);
+        autoLoadIntervalRef.current = null;
+      }
+    };
+  }, [emails.length, hasMoreEmails, onLoadMore]);
+
+  // Cleanup intervals on unmount
+  useEffect(() => {
+    return () => {
+      if (loadMoreTimeoutRef.current) {
+        clearTimeout(loadMoreTimeoutRef.current);
+      }
+      if (autoLoadIntervalRef.current) {
+        clearInterval(autoLoadIntervalRef.current);
+      }
+    };
+  }, []);
 
   const formatTime = (date: Date) => {
     const now = new Date();
@@ -271,6 +356,40 @@ export default function EmailList({
                       <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-gray-400">
                         {email.preview}
                       </p>
+
+                      {/* Labels */}
+                      {email.labels && email.labels.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {email.labels.map((label, index) => (
+                            <span
+                              key={index}
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                label === "important"
+                                  ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+                                  : label === "marketing"
+                                    ? "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+                                    : label === "credentials"
+                                      ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+                                      : label === "social"
+                                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                                        : label === "news"
+                                          ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                                          : label === "meeting"
+                                            ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+                                            : label === "pitch"
+                                              ? "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200"
+                                              : label === "github"
+                                                ? "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
+                                                : label === "invoice"
+                                                  ? "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+                                                  : "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
+                              }`}
+                            >
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -1,5 +1,3 @@
-import { EventEmitter } from "events";
-
 export interface WebSocketMessage {
   type: string;
   [key: string]: unknown;
@@ -15,16 +13,53 @@ export interface NewEmailNotification {
   message: string;
 }
 
-export class WebSocketClient extends EventEmitter {
+// Browser-compatible event emitter
+class BrowserEventEmitter {
+  private events: Map<string, ((...args: unknown[]) => void)[]> = new Map();
+
+  on(event: string, listener: (...args: unknown[]) => void): void {
+    if (!this.events.has(event)) {
+      this.events.set(event, []);
+    }
+    this.events.get(event)!.push(listener);
+  }
+
+  off(event: string, listener: (...args: unknown[]) => void): void {
+    const listeners = this.events.get(event);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index > -1) {
+        listeners.splice(index, 1);
+      }
+    }
+  }
+
+  emit(event: string, ...args: unknown[]): void {
+    const listeners = this.events.get(event);
+    if (listeners) {
+      listeners.forEach((listener) => listener(...args));
+    }
+  }
+
+  removeAllListeners(event?: string): void {
+    if (event) {
+      this.events.delete(event);
+    } else {
+      this.events.clear();
+    }
+  }
+}
+
+export class WebSocketClient extends BrowserEventEmitter {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000; // 1 second
   private isConnecting = false;
-  private pingInterval: NodeJS.Timeout | null = null;
+  private pingInterval: number | null = null;
   private serverUrl: string;
 
-  constructor(serverUrl: string = "ws://localhost:3001") {
+  constructor(serverUrl: string = "wss://hooks.futurixai.com") {
     super();
     this.serverUrl = serverUrl;
   }
@@ -167,14 +202,14 @@ export class WebSocketClient extends EventEmitter {
   }
 
   private startPingInterval(): void {
-    this.pingInterval = setInterval(() => {
+    this.pingInterval = window.setInterval(() => {
       this.send({ type: "ping" });
     }, 30000); // Ping every 30 seconds
   }
 
   private stopPingInterval(): void {
     if (this.pingInterval) {
-      clearInterval(this.pingInterval);
+      window.clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
   }

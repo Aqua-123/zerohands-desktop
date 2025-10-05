@@ -1,15 +1,51 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { EmailMessage } from "../services/email";
 
 interface EmailContentProps {
   email: EmailMessage | null;
   isLoading?: boolean;
+  userEmail?: string;
 }
 
 export default function EmailContent({
   email,
   isLoading = false,
+  userEmail,
 }: EmailContentProps) {
+  const [threadEmails, setThreadEmails] = useState<EmailMessage[]>([]);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+
+  // Load thread emails when email changes
+  useEffect(() => {
+    if (email && userEmail) {
+      loadThreadEmails();
+    } else {
+      setThreadEmails([]);
+    }
+  }, [email, userEmail]);
+
+  const loadThreadEmails = async () => {
+    if (!email || !userEmail) return;
+
+    setIsLoadingThread(true);
+    try {
+      // Import the email service dynamically to avoid circular dependencies
+      const { EmailService } = await import("../services/email");
+      const emailService = new EmailService();
+      const emails = await emailService.getThreadEmails(
+        userEmail,
+        email.threadId,
+      );
+      setThreadEmails(emails);
+    } catch (error) {
+      console.error("Error loading thread emails:", error);
+      // Fallback to showing just the current email
+      setThreadEmails([email]);
+    } finally {
+      setIsLoadingThread(false);
+    }
+  };
+
   const formatDate = (date: Date) => {
     return date.toLocaleDateString([], {
       year: "numeric",
@@ -183,20 +219,70 @@ export default function EmailContent({
         </div>
       </div>
 
-      {/* Email Body */}
-      <div className="flex-1 overflow-y-auto bg-white p-6 dark:bg-gray-800">
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          {email.htmlBody ? (
-            <div
-              dangerouslySetInnerHTML={{ __html: email.htmlBody }}
-              className="text-gray-900 dark:text-white"
-            />
-          ) : (
-            <div className="whitespace-pre-wrap text-gray-900 dark:text-white">
-              {email.body}
-            </div>
-          )}
-        </div>
+      {/* Thread Messages */}
+      <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-800">
+        {isLoadingThread ? (
+          <div className="flex items-center justify-center p-6">
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
+            <span className="ml-2 text-gray-600 dark:text-gray-400">
+              Loading thread...
+            </span>
+          </div>
+        ) : (
+          <div className="space-y-0">
+            {threadEmails.map((threadEmail, index) => (
+              <div
+                key={threadEmail.id}
+                className={`border-b border-gray-200 p-6 dark:border-gray-700 ${
+                  index === 0
+                    ? "bg-blue-50 dark:bg-blue-900/20"
+                    : "bg-white dark:bg-gray-800"
+                }`}
+              >
+                {/* Message Header */}
+                <div className="mb-4 flex items-start justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-600 dark:bg-blue-900 dark:text-blue-200">
+                      {getSenderInitials(threadEmail.sender)}
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {threadEmail.sender}
+                        </span>
+                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                          &lt;{threadEmail.senderEmail}&gt;
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                        {formatDate(threadEmail.timestamp)}
+                      </div>
+                    </div>
+                  </div>
+                  {index === 0 && (
+                    <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                      Latest
+                    </span>
+                  )}
+                </div>
+
+                {/* Message Body */}
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  {threadEmail.htmlBody ? (
+                    <div
+                      dangerouslySetInnerHTML={{ __html: threadEmail.htmlBody }}
+                      className="text-gray-900 dark:text-white"
+                    />
+                  ) : (
+                    <div className="whitespace-pre-wrap text-gray-900 dark:text-white">
+                      {threadEmail.body}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Reply Section */}

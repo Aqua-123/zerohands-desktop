@@ -109,6 +109,19 @@ interface EmailContext {
   ) => Promise<void>;
   setupGmailPushNotifications: (userEmail: string) => Promise<void>;
   setupOutlookWebhook: (userEmail: string, webhookUrl: string) => Promise<void>;
+  getInboxEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
+  processAndLabelEmails: (
+    userEmail: string,
+    onEmailProcessed?: (email: EmailThread) => void,
+  ) => Promise<void>;
+  performIncrementalSync: (
+    userEmail: string,
+    maxResults?: number,
+  ) => Promise<{ newEmailsCount: number; totalEmailsCount: number }>;
   onEmailError: (callback: (error: string) => void) => void;
   onNewEmailNotification: (
     callback: (data: { userEmail: string; newEmails: EmailThread[] }) => void,

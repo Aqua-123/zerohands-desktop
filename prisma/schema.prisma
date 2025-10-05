@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,21 +8,101 @@ datasource db {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  email         String       @unique
-  name          String
-  picture       String?
-  provider      AuthProvider
-  providerId    String
-  accessToken   String
-  refreshToken  String?
-  tokenExpiry   DateTime?
-  scope         String
-  verifiedEmail Boolean      @default(false)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id                String        @id @default(cuid())
+  email             String        @unique
+  name              String
+  picture           String?
+  provider          AuthProvider
+  providerId        String
+  accessToken       String
+  refreshToken      String?
+  tokenExpiry       DateTime?
+  scope             String
+  verifiedEmail     Boolean       @default(false)
+  // Sync state fields for incremental sync
+  gmailHistoryId    String? // Gmail's historyId for incremental sync
+  outlookDeltaToken String? // Outlook's delta token for incremental sync
+  lastSyncTime      DateTime? // Last successful sync timestamp
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  emails            Email[]
+  emailThreads      EmailThread[]
 
   @@unique([provider, providerId])
+}
+
+model EmailThread {
+  id             String             @id @default(cuid())
+  externalId     String
+  subject        String
+  sender         String
+  senderEmail    String
+  preview        String
+  timestamp      DateTime
+  isRead         Boolean            @default(false)
+  isImportant    Boolean            @default(false)
+  hasAttachments Boolean            @default(false)
+  isLabeled      Boolean            @default(false)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  userId         String
+  emails         Email[]
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  labels         EmailThreadLabel[]
+
+  @@unique([userId, externalId])
+  @@index([userId, timestamp])
+  @@index([userId, isLabeled])
+}
+
+model Email {
+  id             String       @id @default(cuid())
+  externalId     String
+  threadId       String
+  subject        String
+  sender         String
+  senderEmail    String
+  recipient      String
+  recipientEmail String
+  timestamp      DateTime
+  body           String
+  htmlBody       String?
+  isRead         Boolean      @default(false)
+  isLabeled      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  userId         String
+  emailThreadId  String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailThread    EmailThread  @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
+  labels         EmailLabel[]
+
+  @@unique([userId, externalId])
+  @@index([userId, timestamp])
+  @@index([userId, isLabeled])
+  @@index([emailThreadId])
+}
+
+model EmailThreadLabel {
+  id            String      @id @default(cuid())
+  label         String
+  createdAt     DateTime    @default(now())
+  emailThreadId String
+  emailThread   EmailThread @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
+
+  @@unique([emailThreadId, label])
+  @@index([emailThreadId])
+}
+
+model EmailLabel {
+  id        String   @id @default(cuid())
+  label     String
+  createdAt DateTime @default(now())
+  emailId   String
+  email     Email    @relation(fields: [emailId], references: [id], onDelete: Cascade)
+
+  @@unique([emailId, label])
+  @@index([emailId])
 }
 
 enum AuthProvider {
