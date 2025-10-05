@@ -30,6 +30,9 @@ export default function EmailInterface({
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [wsClient, setWsClient] = useState<WebSocketClient | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsConnectionError, setWsConnectionError] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     console.log(
@@ -47,13 +50,10 @@ export default function EmailInterface({
       // Step 1: Load emails from database first (local-first approach)
       await loadEmails();
 
-      // Step 2: Setup real-time email notifications
-      setupEmailNotifications();
-
-      // Step 3: Perform incremental sync to get any new emails
+      // Step 2: Perform incremental sync to get any new emails
       await performIncrementalSync();
 
-      // Step 4: Setup real-time connections
+      // Step 3: Setup real-time connections (WebSocket only)
       setupWebSocketConnection();
 
       console.log(`[EMAIL_INTERFACE] Email client initialization completed`);
@@ -63,72 +63,6 @@ export default function EmailInterface({
         error,
       );
     }
-  };
-
-  const setupEmailNotifications = () => {
-    if (!window.email) return;
-
-    console.log(`[EMAIL_INTERFACE] Setting up email notifications`);
-
-    // Listen for new emails being processed
-    window.email.onNewEmailNotification((data) => {
-      console.log(
-        `[EMAIL_INTERFACE] Received notification for user: ${data.userEmail}, current user: ${userEmail}`,
-      );
-
-      if (data.userEmail === userEmail) {
-        console.log(
-          `[EMAIL_INTERFACE] ✅ Processing ${data.newEmails.length} new emails via notification`,
-        );
-
-        setEmails((prevEmails) => {
-          // Create a map for efficient lookup and deduplication
-          const emailMap = new Map<string, EmailThread>();
-
-          // Add existing emails to map
-          prevEmails.forEach((email) => {
-            emailMap.set(email.id, email);
-          });
-
-          // Track if any changes were made
-          let hasChanges = false;
-
-          // Process new emails - update existing or add new ones
-          data.newEmails.forEach((newEmail) => {
-            const existingEmail = emailMap.get(newEmail.id);
-            if (
-              !existingEmail ||
-              existingEmail.timestamp.getTime() !== newEmail.timestamp.getTime()
-            ) {
-              emailMap.set(newEmail.id, newEmail);
-              hasChanges = true;
-              console.log(
-                `[EMAIL_INTERFACE] Processed email: ${newEmail.id} (${existingEmail ? "updated" : "added"})`,
-              );
-            }
-          });
-
-          // Only update state if there were actual changes
-          if (!hasChanges) {
-            console.log(
-              `[EMAIL_INTERFACE] No changes detected, skipping state update`,
-            );
-            return prevEmails;
-          }
-
-          // Convert back to array and sort by timestamp (newest first)
-          const updatedEmails = Array.from(emailMap.values()).sort(
-            (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
-          );
-
-          console.log(
-            `[EMAIL_INTERFACE] Updated email list: ${updatedEmails.length} total emails (${data.newEmails.length} new/updated)`,
-          );
-
-          return updatedEmails;
-        });
-      }
-    });
   };
 
   const performIncrementalSync = async () => {
@@ -558,6 +492,7 @@ export default function EmailInterface({
       client.on("connected", () => {
         console.log("🔌 Connected to notification server");
         setWsConnected(true);
+        setWsConnectionError(null);
       });
 
       client.on("disconnected", () => {
@@ -575,13 +510,16 @@ export default function EmailInterface({
 
       client.on("newEmail", (notification: unknown) => {
         console.log("📧 New email notification:", notification);
-        // Refresh emails when we receive a notification
-        loadEmails(true);
+        // Perform incremental sync to get new emails when we receive a notification
+        performIncrementalSync();
       });
 
       client.on("error", (error) => {
         console.error("WebSocket error:", error);
         setWsConnected(false);
+        setWsConnectionError(
+          error instanceof Error ? error.message : "Connection failed",
+        );
       });
 
       // Connect to the WebSocket server
@@ -593,6 +531,9 @@ export default function EmailInterface({
     } catch (error) {
       console.error("Error setting up WebSocket connection:", error);
       setWsConnected(false);
+      setWsConnectionError(
+        error instanceof Error ? error.message : "Failed to setup connection",
+      );
     }
   };
 
@@ -700,8 +641,20 @@ export default function EmailInterface({
         {!wsConnected && (
           <div className="rounded-lg border border-yellow-300 bg-yellow-100 px-3 py-2 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-200">
             <div className="flex items-center space-x-2">
-              <div className="h-2 w-2 rounded-full bg-yellow-500"></div>
-              <span>Connecting to notification server...</span>
+              <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500"></div>
+              <span>
+                {wsConnectionError
+                  ? `Connection failed: ${wsConnectionError}`
+                  : "Connecting to notification server..."}
+              </span>
+            </div>
+          </div>
+        )}
+        {wsConnected && (
+          <div className="rounded-lg border border-green-300 bg-green-100 px-3 py-2 text-sm text-green-800 dark:border-green-700 dark:bg-green-900/20 dark:text-green-200">
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 rounded-full bg-green-500"></div>
+              <span>Connected to notification server</span>
             </div>
           </div>
         )}

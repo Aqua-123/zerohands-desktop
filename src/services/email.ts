@@ -8,7 +8,11 @@ import {
   CreateEmailThreadData,
   CreateEmailData,
 } from "./database";
-import { AuthProvider, EmailThread as PrismaEmailThread } from "@prisma/client";
+import {
+  AuthProvider,
+  EmailThread as PrismaEmailThread,
+  Email,
+} from "@prisma/client";
 import { generateLabels } from "../lib/generateLabels";
 
 // ---------------- Types ----------------
@@ -41,6 +45,7 @@ export interface EmailThread {
   isImportant: boolean;
   hasAttachments: boolean;
   labels?: string[];
+  messages?: EmailMessage[]; // Store individual messages for processing
 }
 
 export interface EmailMessage {
@@ -236,23 +241,40 @@ export class EmailService {
       const hist = await gmail.users.history.list({
         userId: "me",
         startHistoryId: lastHistoryId,
-        historyTypes: ["threadAdded"],
+        historyTypes: ["messageAdded", "labelAdded", "labelRemoved"],
       });
 
       const history = hist.data.history || [];
       const allThreadIds: string[] = [];
 
       for (const rec of history) {
+        // Handle message additions
         const adds = rec.messagesAdded || [];
         for (const add of adds) {
           const id = add.message?.threadId;
           if (id) allThreadIds.push(id);
         }
+
+        // Handle label changes
+        const labelsAdded = rec.labelsAdded || [];
+        for (const labelAdd of labelsAdded) {
+          const id = labelAdd.message?.threadId;
+          if (id) allThreadIds.push(id);
+        }
+
+        const labelsRemoved = rec.labelsRemoved || [];
+        for (const labelRemove of labelsRemoved) {
+          const id = labelRemove.message?.threadId;
+          if (id) allThreadIds.push(id);
+        }
       }
+
+      // Remove duplicates from thread IDs
+      const uniqueThreadIds = Array.from(new Set(allThreadIds));
 
       // Process all thread IDs in parallel batches
       const batchSize = 10;
-      const threadBatches = this.chunkArray(allThreadIds, batchSize);
+      const threadBatches = this.chunkArray(uniqueThreadIds, batchSize);
 
       for (const batch of threadBatches) {
         const batchPromises = batch.map(async (id) => {
@@ -874,59 +896,68 @@ export class EmailService {
           item !== null,
       );
 
-    // 2) Generate labels and collect provider updates
-
-    const labelingPromises = successfulResults.map(
+    // 2) Process individual messages from the threads we already fetched
+    // Note: The threads were already fetched with format: "full" and include individual messages
+    const messageProcessingPromises = successfulResults.map(
       async ({ email, savedThread }) => {
         try {
-          const labels = await generateLabels(email.subject, email.preview);
+          // Get the individual messages from the thread data
+          const threadMessages = email.messages || [];
 
-          // Update database labels
+          // Process each individual message
+          const messageLabels: string[] = [];
+          for (const message of threadMessages) {
+            try {
+              // Generate labels using full message content
+              const labels = await generateLabels(
+                message.subject,
+                message.body,
+              );
+
+              // Save individual email message to database
+              const savedEmail = await this.saveEmailMessageToDatabase(
+                user.id,
+                message,
+                savedThread.id,
+              );
+
+              // Add individual email labels to database
+              if (savedEmail) {
+                await this.databaseService.addEmailLabels(
+                  savedEmail.id,
+                  labels,
+                );
+              }
+
+              // Collect labels for thread-level aggregation
+              messageLabels.push(...labels);
+            } catch (e) {
+              console.error(
+                `[EMAIL_SERVICE] Failed to process message ${message.id}:`,
+                e,
+              );
+            }
+          }
+
+          // Remove duplicates and update thread-level labels
+          const uniqueLabels = Array.from(new Set(messageLabels));
           await this.databaseService.addEmailThreadLabels(
             savedThread.id,
-            labels,
+            uniqueLabels,
           );
 
-          email.labels = labels;
+          email.labels = uniqueLabels;
           onEmailSaved?.(email);
-
-          // // Provider updates (clubbed)
-          // if (user.provider === AuthProvider.GOOGLE) {
-          //   gmailOps.push({
-          //     threadId: email.id, // Now using thread ID instead of message ID
-          //     labels,
-          //     operation: "replace", // same behavior as before
-          //   });
-          // } else if (user.provider === AuthProvider.OUTLOOK) {
-          //   // Keep Outlook per-message; Graph lacks an equivalent batch for categories
-          //   this.updateOutlookMessageLabels(
-          //     user.accessToken,
-          //     email.id,
-          //     labels,
-          //     "replace",
-          //   ).catch((e) =>
-          //     console.error(
-          //       `[EMAIL_SERVICE] Provider labeling failed for ${email.id}:`,
-          //       e,
-          //     ),
-          //   );
-          // }
         } catch (e) {
-          console.error(`[EMAIL_SERVICE] Labeling failed for ${email.id}:`, e);
+          console.error(
+            `[EMAIL_SERVICE] Thread processing failed for ${email.id}:`,
+            e,
+          );
         }
       },
     );
 
-    await Promise.allSettled(labelingPromises);
-
-    // 3) Apply all Gmail label changes in batched calls
-    // if (user.provider === AuthProvider.GOOGLE && gmailOps.length) {
-    //   try {
-    //     await this.batchUpdateGmailLabels(user.accessToken, gmailOps);
-    //   } catch (e) {
-    //     console.error("[EMAIL_SERVICE] Gmail batchModify failed:", e);
-    //   }
-    // }
+    await Promise.allSettled(messageProcessingPromises);
   }
 
   async updateMessageLabels(
@@ -1056,9 +1087,10 @@ export class EmailService {
       );
     }
 
-    // If not found in database, fetch from API
+    // If not found in database, this suggests the email wasn't processed during initial sync
+    // This should rarely happen if the initial processing worked correctly
     console.log(
-      `[EMAIL_SERVICE] Email content not found in database, fetching from API: ${messageId}`,
+      `[EMAIL_SERVICE] Email content not found in database, fetching from API: ${messageId}. This suggests the email wasn't processed during initial sync.`,
     );
 
     const email =
@@ -1081,17 +1113,32 @@ export class EmailService {
     const user = await this.databaseService.findUserByEmail(userId);
     if (!user) throw new Error("User not found");
 
+    console.log(
+      `[EMAIL_SERVICE] Getting thread emails for threadId: ${threadId}, userId: ${user.id}`,
+    );
+
     // Get the thread to find the external thread ID
     const thread = await this.databaseService.getEmailThreadByExternalId(
       user.id,
       threadId,
     );
-    if (!thread) throw new Error("Thread not found");
+    if (!thread) {
+      console.log(`[EMAIL_SERVICE] Thread not found in database: ${threadId}`);
+      throw new Error("Thread not found");
+    }
+
+    console.log(
+      `[EMAIL_SERVICE] Found thread in database: ${thread.id} (${thread.externalId})`,
+    );
 
     // Get all emails in the thread from database
     const dbEmails = await this.databaseService.getEmailsByThreadId(
       thread.id,
       user.id,
+    );
+
+    console.log(
+      `[EMAIL_SERVICE] Found ${dbEmails.length} emails in thread from database`,
     );
 
     // Convert database emails to EmailMessage format
@@ -1154,16 +1201,72 @@ export class EmailService {
     }
   }
 
+  private async saveEmailMessageToDatabase(
+    userId: string,
+    email: EmailMessage,
+    emailThreadId: string,
+  ): Promise<Email | null> {
+    try {
+      console.log(
+        `[EMAIL_SERVICE] Saving email message to database: ${email.id} (externalId: ${email.id})`,
+      );
+
+      const emailData: CreateEmailData = {
+        externalId: email.id,
+        threadId: email.threadId,
+        subject: email.subject,
+        sender: email.sender,
+        senderEmail: email.senderEmail,
+        recipient: email.recipient,
+        recipientEmail: email.recipientEmail,
+        timestamp: email.timestamp,
+        body: email.body,
+        htmlBody: email.htmlBody,
+        isRead: email.isRead,
+        userId,
+        emailThreadId,
+      };
+
+      const savedEmail = await this.databaseService.upsertEmail(emailData);
+      console.log(
+        `[EMAIL_SERVICE] Successfully saved email message: ${email.id}`,
+      );
+      return savedEmail;
+    } catch (e) {
+      console.error(`Error saving email message ${email.id} to database:`, e);
+      return null;
+    }
+  }
+
   async markEmailAsRead(userId: string, messageId: string): Promise<void> {
     const user = await this.databaseService.findUserByEmail(userId);
     if (!user) throw new Error("User not found");
 
-    if (user.provider === AuthProvider.GOOGLE) {
-      await this.markGmailMessageAsRead(user.accessToken, messageId);
-    } else if (user.provider === AuthProvider.OUTLOOK) {
-      await this.markOutlookMessageAsRead(user.accessToken, messageId);
-    } else {
-      throw new Error("Unsupported email provider");
+    try {
+      // Mark as read in the external service
+      if (user.provider === AuthProvider.GOOGLE) {
+        await this.markGmailMessageAsRead(user.accessToken, messageId);
+      } else if (user.provider === AuthProvider.OUTLOOK) {
+        await this.markOutlookMessageAsRead(user.accessToken, messageId);
+      } else {
+        throw new Error("Unsupported email provider");
+      }
+
+      // Update local database
+      await this.databaseService.updateEmailReadStatus(
+        user.id,
+        messageId,
+        true,
+      );
+      console.log(
+        `[EMAIL_SERVICE] Successfully marked email ${messageId} as read`,
+      );
+    } catch (error) {
+      console.error(
+        `[EMAIL_SERVICE] Error marking email ${messageId} as read:`,
+        error,
+      );
+      throw error;
     }
   }
 
@@ -1247,6 +1350,24 @@ export class EmailService {
         (msg.labelIds || []).forEach((label) => allLabels.add(label));
       });
 
+      // Extract individual messages from the thread
+      const messages: EmailMessage[] = [];
+      if (threadData.messages) {
+        for (const messageData of threadData.messages) {
+          try {
+            const message = this.parseGmailMessageContent(
+              messageData as GmailMessageData,
+            );
+            messages.push(message);
+          } catch (e) {
+            console.error(
+              `Error parsing Gmail message ${messageData.id} in thread:`,
+              e,
+            );
+          }
+        }
+      }
+
       return {
         id: threadData.id!,
         subject: subject || "(No Subject)",
@@ -1259,55 +1380,10 @@ export class EmailService {
         isImportant,
         hasAttachments,
         labels: Array.from(allLabels),
+        messages, // Include individual messages
       };
     } catch (e) {
       console.error("parseGmailThread error:", e);
-      return null;
-    }
-  }
-
-  private parseGmailMessage(messageData: GmailMessageData): EmailThread | null {
-    try {
-      const headers = messageData.payload?.headers || [];
-      const getHeader = (n: string) =>
-        headers.find((h) => h.name?.toLowerCase() === n.toLowerCase())?.value ||
-        "";
-
-      const subject = getHeader("Subject");
-      const from = getHeader("From");
-      const date = getHeader("Date");
-
-      const fromMatch = from.match(/^(.*?)\s*<(.+)>$/) || from.match(/^(.+)$/);
-      const senderName = fromMatch ? fromMatch[1].trim() : from;
-      const senderEmail =
-        fromMatch && (fromMatch as RegExpMatchArray)[2]
-          ? (fromMatch as RegExpMatchArray)[2]
-          : from;
-
-      const snippet = messageData.snippet || "";
-      const isRead = !(messageData.labelIds || []).includes("UNREAD");
-      const isImportant =
-        (messageData.labelIds || []).includes("IMPORTANT") || false;
-
-      const hasAttachments = !!messageData.payload?.parts?.some(
-        (p) => p.filename || p.parts?.some((pp) => pp.filename),
-      );
-
-      return {
-        id: messageData.id!,
-        subject: subject || "(No Subject)",
-        sender: senderName,
-        senderEmail,
-        preview:
-          snippet.substring(0, 100) + (snippet.length > 100 ? "..." : ""),
-        timestamp: new Date(date),
-        isRead,
-        isImportant,
-        hasAttachments,
-        labels: messageData.labelIds || [],
-      };
-    } catch (e) {
-      console.error("parseGmailMessage error:", e);
       return null;
     }
   }
@@ -1362,6 +1438,9 @@ export class EmailService {
     const senderName = from.name || from.address || "Unknown";
     const senderEmail = from.address || "";
 
+    // Parse the individual message content
+    const message = this.parseOutlookMessageContent(messageData);
+
     return {
       id: messageData.id,
       subject: messageData.subject || "(No Subject)",
@@ -1375,6 +1454,7 @@ export class EmailService {
       isRead: messageData.isRead,
       isImportant: messageData.importance === "high",
       hasAttachments: messageData.hasAttachments,
+      messages: [message], // Include the individual message
     };
   }
 

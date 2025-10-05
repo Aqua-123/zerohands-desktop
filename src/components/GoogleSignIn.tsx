@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { useNavigate } from "@tanstack/react-router";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface GoogleUserInfo {
   id: string;
@@ -8,6 +9,7 @@ interface GoogleUserInfo {
   name: string;
   picture?: string;
   verified_email: boolean;
+  provider?: "GOOGLE";
 }
 
 interface OutlookUserInfo {
@@ -16,6 +18,7 @@ interface OutlookUserInfo {
   name: string;
   picture?: string;
   verified_email: boolean;
+  provider?: "OUTLOOK";
 }
 
 interface OAuthTokens {
@@ -33,26 +36,30 @@ interface AuthResult {
 
 export default function GoogleSignIn() {
   const navigate = useNavigate();
+  const { signIn } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
-  const [user, setUser] = useState<GoogleUserInfo | OutlookUserInfo | null>(
-    null,
-  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Set up event listeners for OAuth events
     if (window.oauth) {
       window.oauth.onOAuthAuthenticated((data: AuthResult) => {
-        setUser(data.userInfo);
         setIsLoading(false);
         setError(null);
         console.log("OAuth successful:", data);
 
-        // Store user data in localStorage for the emails page
-        localStorage.setItem(
-          "authenticatedUser",
-          JSON.stringify(data.userInfo),
-        );
+        // Use the auth context to sign in the user
+        if (data.userInfo) {
+          const authUser = {
+            id: data.userInfo.id,
+            email: data.userInfo.email,
+            name: data.userInfo.name,
+            picture: data.userInfo.picture,
+            provider:
+              data.userInfo.provider || ("GOOGLE" as "GOOGLE" | "OUTLOOK"),
+          };
+          signIn(authUser);
+        }
 
         // Navigate to emails page after successful authentication
         setTimeout(() => {
@@ -66,7 +73,7 @@ export default function GoogleSignIn() {
         console.error("OAuth error:", error);
       });
     }
-  }, []);
+  }, [signIn, navigate]);
 
   const handleGoogleSignIn = async () => {
     if (!window.oauth) {
@@ -105,51 +112,6 @@ export default function GoogleSignIn() {
       setIsLoading(false);
     }
   };
-
-  const handleSignOut = async () => {
-    if (user && window.oauth) {
-      try {
-        // In a real app, you'd want to store the access token securely
-        // For now, we'll just clear the user state
-        setUser(null);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Sign out failed");
-      }
-    }
-  };
-
-  if (user) {
-    return (
-      <div className="flex flex-col items-center space-y-4 rounded-lg bg-white p-6 shadow-md dark:bg-gray-800">
-        <div className="flex items-center space-x-4">
-          {user.picture && (
-            <img
-              src={user.picture}
-              alt={user.name}
-              className="h-12 w-12 rounded-full"
-            />
-          )}
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {user.name}
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              {user.email}
-            </p>
-            {user.verified_email && (
-              <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200">
-                Verified
-              </span>
-            )}
-          </div>
-        </div>
-        <Button onClick={handleSignOut} variant="outline" className="w-full">
-          Sign Out
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col items-center space-y-4 rounded-lg bg-white p-6 shadow-md dark:bg-gray-800">

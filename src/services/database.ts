@@ -603,6 +603,67 @@ export class DatabaseService {
     }
   }
 
+  async addEmailLabels(emailId: string, labels: string[]): Promise<Email> {
+    try {
+      if (labels.length === 0) {
+        return await this.prisma.email.findUniqueOrThrow({
+          where: { id: emailId },
+          include: { labels: true },
+        });
+      }
+
+      // Get existing labels to avoid duplicates
+      const existingLabels = await this.prisma.emailLabel.findMany({
+        where: { emailId },
+        select: { label: true },
+      });
+
+      const existingLabelSet = new Set(existingLabels.map((l) => l.label));
+      const newLabels = labels.filter((label) => !existingLabelSet.has(label));
+
+      // Add only new labels one by one to handle duplicates gracefully
+      if (newLabels.length > 0) {
+        for (const label of newLabels) {
+          try {
+            await this.prisma.emailLabel.create({
+              data: {
+                emailId,
+                label,
+              },
+            });
+          } catch (error: unknown) {
+            // If it's a unique constraint error, the label already exists, so we can ignore it
+            if (
+              error &&
+              typeof error === "object" &&
+              "code" in error &&
+              error.code === "P2002"
+            ) {
+              console.log(
+                `[DATABASE] Label ${label} already exists for email ${emailId}, skipping`,
+              );
+              continue;
+            }
+            // For other errors, log and continue
+            console.error(
+              `[DATABASE] Error creating label ${label} for email ${emailId}:`,
+              error,
+            );
+          }
+        }
+      }
+
+      // Return updated email
+      return await this.prisma.email.findUniqueOrThrow({
+        where: { id: emailId },
+        include: { labels: true },
+      });
+    } catch (error) {
+      console.error("Error adding email labels:", error);
+      throw error;
+    }
+  }
+
   async removeEmailThreadLabels(
     threadId: string,
     labels: string[],
@@ -777,6 +838,40 @@ export class DatabaseService {
     } catch (error) {
       console.error("Error updating email labels:", error);
       throw error;
+    }
+  }
+
+  async updateEmailReadStatus(
+    userId: string,
+    externalId: string,
+    isRead: boolean,
+  ): Promise<Email | null> {
+    try {
+      console.log(
+        `[DATABASE] Updating email read status: ${externalId} -> ${isRead} for userId: ${userId}`,
+      );
+
+      return await this.prisma.email.update({
+        where: {
+          userId_externalId: {
+            userId,
+            externalId,
+          },
+        },
+        data: {
+          isRead,
+          updatedAt: new Date(),
+        },
+        include: {
+          labels: true,
+        },
+      });
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error updating email read status for ${externalId}:`,
+        error,
+      );
+      return null;
     }
   }
 

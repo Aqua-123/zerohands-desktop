@@ -67,15 +67,22 @@ export class WebSocketClient extends BrowserEventEmitter {
   connect(userId: string, userEmail: string): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.isConnecting) {
+        console.log(
+          "🔌 WebSocket connection already in progress, rejecting new attempt",
+        );
         reject(new Error("Connection already in progress"));
         return;
       }
 
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        console.log("🔌 WebSocket already connected, resolving immediately");
         resolve();
         return;
       }
 
+      console.log(
+        `🔌 Attempting to connect to WebSocket server: ${this.serverUrl}`,
+      );
       this.isConnecting = true;
 
       try {
@@ -130,6 +137,8 @@ export class WebSocketClient extends BrowserEventEmitter {
 
         this.ws.onerror = (error) => {
           console.error("🔌 WebSocket error:", error);
+          console.error("🔌 WebSocket readyState:", this.ws?.readyState);
+          console.error("🔌 WebSocket URL:", this.serverUrl);
           this.isConnecting = false;
           this.emit("error", error);
           reject(error);

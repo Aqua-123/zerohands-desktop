@@ -1,24 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { useAuth } from "@/contexts/AuthContext";
 import EmailInterface from "@/components/EmailInterface";
+import AuthGuard from "@/components/AuthGuard";
 
 function EmailsPage() {
-  const [userEmail, setUserEmail] = useState<string>("");
+  const { user } = useAuth();
 
-  useEffect(() => {
-    // In a real app, you would get this from your authentication state
-    // For now, we'll use a placeholder or get it from localStorage
-    const storedUser = localStorage.getItem("authenticatedUser");
-    if (storedUser) {
-      const user = JSON.parse(storedUser);
-      setUserEmail(user.email);
-    } else {
-      // Fallback to a placeholder for demo purposes
-      setUserEmail("user@example.com");
-    }
-  }, []);
-
-  if (!userEmail) {
+  if (!user) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
@@ -30,9 +19,11 @@ function EmailsPage() {
   }
 
   return (
-    <div className="h-full">
-      <EmailInterface userEmail={userEmail} />
-    </div>
+    <AuthGuard requireAuth={true}>
+      <div className="h-full">
+        <EmailInterface userEmail={user.email} userProvider={user.provider} />
+      </div>
+    </AuthGuard>
   );
 }
 

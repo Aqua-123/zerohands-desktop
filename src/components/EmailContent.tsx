@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { EmailMessage } from "../services/email";
+import ThreadReply from "./Compose/ThreadReply";
 
 interface EmailContentProps {
   email: EmailMessage | null;
@@ -14,6 +15,10 @@ export default function EmailContent({
 }: EmailContentProps) {
   const [threadEmails, setThreadEmails] = useState<EmailMessage[]>([]);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
+  const [replyAllToMessageId, setReplyAllToMessageId] = useState<string | null>(
+    null,
+  );
 
   // Load thread emails when email changes
   useEffect(() => {
@@ -259,11 +264,27 @@ export default function EmailContent({
                       </div>
                     </div>
                   </div>
-                  {index === 0 && (
-                    <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                      Latest
-                    </span>
-                  )}
+                  <div className="flex items-center space-x-2">
+                    {index === 0 && (
+                      <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                        Latest
+                      </span>
+                    )}
+                    <div className="flex space-x-1">
+                      <button
+                        onClick={() => setReplyToMessageId(threadEmail.id)}
+                        className="rounded-lg px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+                      >
+                        Reply
+                      </button>
+                      <button
+                        onClick={() => setReplyAllToMessageId(threadEmail.id)}
+                        className="rounded-lg px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+                      >
+                        Reply All
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Message Body */}
@@ -286,28 +307,36 @@ export default function EmailContent({
       </div>
 
       {/* Reply Section */}
-      <div className="border-t border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
-        <div className="rounded-lg border border-gray-300 bg-white p-3 dark:border-gray-600 dark:bg-gray-800">
-          <div className="text-sm text-gray-600 dark:text-gray-400">
-            Re: {email.subject}
-          </div>
-          <div className="mt-2">
-            <textarea
-              placeholder="Type your reply..."
-              className="w-full resize-none border-0 bg-transparent text-sm text-gray-900 placeholder-gray-500 focus:outline-none dark:text-white dark:placeholder-gray-400"
-              rows={3}
-            />
-          </div>
-          <div className="mt-2 flex justify-end space-x-2">
-            <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-              Send
-            </button>
-            <button className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600">
-              Cancel
-            </button>
-          </div>
+      {email && (
+        <div className="border-t border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
+          <ThreadReply
+            messages={threadEmails.map((msg) => ({
+              ...msg,
+              fromAddress: msg.senderEmail,
+              fromName: msg.sender,
+              toAddresses: [msg.recipientEmail],
+              ccAddresses: [],
+              bccAddresses: [],
+              date: msg.timestamp.toISOString(),
+              snippet: msg.body.substring(0, 100),
+              labels: [],
+            }))}
+            threadId={email.threadId}
+            replyToMessageId={replyToMessageId}
+            replyAllToMessageId={replyAllToMessageId}
+            onReplyCancel={() => {
+              setReplyToMessageId(null);
+              setReplyAllToMessageId(null);
+            }}
+            onThreadRefresh={() => {
+              // Refresh the thread when a reply is sent
+              console.log("Thread refresh requested");
+              setReplyToMessageId(null);
+              setReplyAllToMessageId(null);
+            }}
+          />
         </div>
-      </div>
+      )}
     </div>
   );
 }
