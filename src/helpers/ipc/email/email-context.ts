@@ -12,6 +12,10 @@ export interface EmailContext {
     userEmail: string,
     messageId: string,
   ) => Promise<EmailMessage>;
+  getThreadEmails: (
+    userEmail: string,
+    threadId: string,
+  ) => Promise<EmailMessage[]>;
   markEmailAsRead: (userEmail: string, messageId: string) => Promise<void>;
   sendEmail: (
     userEmail: string,
@@ -35,6 +39,10 @@ export interface EmailContext {
     userEmail: string,
     maxResults?: number,
   ) => Promise<{ newEmailsCount: number; totalEmailsCount: number }>;
+  performInitialSync: (
+    userEmail: string,
+    onEmailProcessed?: (email: EmailThread) => void,
+  ) => Promise<{ newEmailsCount: number; totalEmailsCount: number }>;
   updateMessageLabels: (
     userEmail: string,
     messageId: string,
@@ -44,6 +52,12 @@ export interface EmailContext {
   onEmailError: (callback: (error: string) => void) => void;
   onNewEmailNotification: (
     callback: (data: { userEmail: string; newEmails: EmailThread[] }) => void,
+  ) => void;
+  onInitialSyncProgress: (
+    callback: (data: {
+      userEmail: string;
+      progress: { processed: number; total: number; currentEmail: string };
+    }) => void,
   ) => void;
 }
 
@@ -61,6 +75,8 @@ const emailContext: EmailContext = {
     ),
   getEmailContent: (userEmail: string, messageId: string) =>
     ipcRenderer.invoke(EMAIL_CHANNELS.GET_EMAIL_CONTENT, userEmail, messageId),
+  getThreadEmails: (userEmail: string, threadId: string) =>
+    ipcRenderer.invoke(EMAIL_CHANNELS.GET_THREAD_EMAILS, userEmail, threadId),
   markEmailAsRead: (userEmail: string, messageId: string) =>
     ipcRenderer.invoke(EMAIL_CHANNELS.MARK_EMAIL_AS_READ, userEmail, messageId),
   sendEmail: (
@@ -119,6 +135,35 @@ const emailContext: EmailContext = {
       userEmail,
       maxResults,
     ),
+  performInitialSync: (
+    userEmail: string,
+    onEmailProcessed?: (email: EmailThread) => void,
+  ) => {
+    // Set up listener for processed emails if callback provided
+    if (onEmailProcessed) {
+      const listener = (
+        _: unknown,
+        data: { userEmail: string; newEmails: EmailThread[] },
+      ) => {
+        if (data.userEmail === userEmail) {
+          data.newEmails.forEach(onEmailProcessed);
+        }
+      };
+      ipcRenderer.on(EMAIL_CHANNELS.NEW_EMAIL_NOTIFICATION, listener);
+
+      // Return a promise that cleans up the listener when resolved
+      return ipcRenderer
+        .invoke(EMAIL_CHANNELS.PERFORM_INITIAL_SYNC, userEmail)
+        .finally(() => {
+          ipcRenderer.removeListener(
+            EMAIL_CHANNELS.NEW_EMAIL_NOTIFICATION,
+            listener,
+          );
+        });
+    }
+
+    return ipcRenderer.invoke(EMAIL_CHANNELS.PERFORM_INITIAL_SYNC, userEmail);
+  },
   updateMessageLabels: (
     userEmail: string,
     messageId: string,
@@ -137,6 +182,11 @@ const emailContext: EmailContext = {
   },
   onNewEmailNotification: (callback) => {
     ipcRenderer.on(EMAIL_CHANNELS.NEW_EMAIL_NOTIFICATION, (_, data) =>
+      callback(data),
+    );
+  },
+  onInitialSyncProgress: (callback) => {
+    ipcRenderer.on(EMAIL_CHANNELS.INITIAL_SYNC_PROGRESS, (_, data) =>
       callback(data),
     );
   },

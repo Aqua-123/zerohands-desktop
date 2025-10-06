@@ -22,6 +22,9 @@ import { Button } from "../ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import type { EmailMessage } from "@/services/email";
 import "./ThreadReply.css";
+import EnhancedScheduleMeetingPopup from "../ScheduleMeetingPopup";
+import calendarAPI from "@/helpers/ipc/calendar/calendar-api";
+import type { CreateEventData } from "@/types";
 
 // ---------- Types ----------
 interface SendReplyData {
@@ -102,6 +105,46 @@ interface ThreadReplyProps {
   onCollapseAllMessages?: () => void;
 }
 
+function getAllThreadParticipants(messages: ExtendedEmailMessage[]): string[] {
+  const participants = new Set<string>();
+  messages.forEach((m) => {
+    if (m.fromAddress) participants.add(m.fromAddress);
+    (m.toAddresses || []).forEach(
+      (e: string) => e && e.includes("@") && participants.add(e),
+    );
+    (m.ccAddresses || []).forEach(
+      (e: string) => e && e.includes("@") && participants.add(e),
+    );
+    (m.bccAddresses || []).forEach(
+      (e: string) => e && e.includes("@") && participants.add(e),
+    );
+  });
+  return Array.from(participants);
+}
+function getAllThreadEmailDateHeaders(
+  messages: ExtendedEmailMessage[],
+): Record<string, string> {
+  const dateHeaders: Record<string, string> = {};
+  messages.forEach((m) => {
+    const perMsg = new Set<string>();
+    if (m.fromAddress) perMsg.add(m.fromAddress);
+    [
+      ...(m.toAddresses || []),
+      ...(m.ccAddresses || []),
+      ...(m.bccAddresses || []),
+    ].forEach((e: string) => e && e.includes("@") && perMsg.add(e));
+    perMsg.forEach((email) => {
+      // Only set the date if it's not already set, or if this message is more recent
+      if (
+        !dateHeaders[email] ||
+        new Date(m.date || "") > new Date(dateHeaders[email] || "")
+      ) {
+        dateHeaders[email] = m.date || "";
+      }
+    });
+  });
+  return dateHeaders;
+}
 export default function ThreadReply({
   messages,
   threadId,
@@ -140,6 +183,7 @@ export default function ThreadReply({
   // UI toggles
   const [showGiphySelector, setShowGiphySelector] = useState(false);
 
+  const [isScheduleMeetingOpen, setIsScheduleMeetingOpen] = useState(false);
   // Follow-up
   const [followUpScheduled, setFollowUpScheduled] = useState(false);
   const [followUpDuration, setFollowUpDuration] = useState<
@@ -631,10 +675,108 @@ Content: ${m.snippet || "No content available"}`,
       toast.error("Failed to cancel followup");
     }
   }, [predraftData, onPredraftUpdate]);
+
   const handleScheduleMeeting = useCallback(() => {
-    // Mock implementation - replace with actual meeting scheduling
-    toast.info("Meeting scheduling feature coming soon");
+    setIsScheduleMeetingOpen(true);
   }, []);
+
+  const handleMeetingSave = useCallback(
+    async (meetingData: {
+      title: string;
+      startDate: string;
+      startTime: string;
+      endTime: string;
+      participants: string;
+      description: string;
+      isVirtual: boolean;
+      location?: string;
+      timezone?: string;
+    }) => {
+      try {
+        if (!session?.email) {
+          toast.error("User email not found");
+          return;
+        }
+
+        // Convert MeetingDataAPI to CreateEventData format
+        const eventData: CreateEventData = {
+          title: meetingData.title,
+          startDate: meetingData.startDate,
+          startTime: meetingData.startTime,
+          endTime: meetingData.endTime,
+          description: meetingData.description,
+          attendees: meetingData.participants
+            ? meetingData.participants
+                .split(",")
+                .map((email: string) => email.trim())
+                .filter((email: string) => email.includes("@"))
+                .map((email: string) => ({
+                  email,
+                  displayName: email.split("@")[0],
+                  responseStatus: "needsAction",
+                }))
+            : [],
+          isVirtual: meetingData.isVirtual,
+          location: meetingData.location,
+          timezone:
+            meetingData.timezone ||
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
+
+        // Check for conflicts first
+        const conflicts = await calendarAPI.checkConflicts(
+          session.email,
+          eventData,
+        );
+
+        if (conflicts.hasConflicts) {
+          const shouldProceed = window.confirm(
+            `You have ${conflicts.conflictingEvents.length} conflicting event(s) at this time. Do you want to proceed anyway?`,
+          );
+          if (!shouldProceed) {
+            return;
+          }
+        }
+
+        // Create the calendar event
+        const result = await calendarAPI.createEvent(session.email, eventData);
+
+        if (result) {
+          const attendeesCount = eventData.attendees?.length || 0;
+          let msg = "Meeting scheduled successfully";
+
+          if (attendeesCount > 0) {
+            // Determine provider from user's email domain or other logic
+            const provider =
+              session.email.includes("@gmail.com") ||
+              session.email.includes("@googlemail.com")
+                ? "Google"
+                : "Outlook";
+            const meetingType =
+              provider === "Outlook" ? "Teams" : "Google Meet";
+            msg = `Meeting scheduled with ${meetingType}. Invites sent to ${attendeesCount} attendee${attendeesCount > 1 ? "s" : ""}`;
+          }
+
+          toast.success(msg);
+          setIsScheduleMeetingOpen(false);
+
+          // Show conflict information if there were conflicts
+          if (conflicts.hasConflicts) {
+            toast.warning(
+              `Meeting created despite ${conflicts.conflictingEvents.length} conflicting event(s)`,
+            );
+          }
+        }
+      } catch (error) {
+        console.error("Error scheduling meeting:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to schedule meeting";
+        toast.error(errorMessage);
+      }
+    },
+    [session?.email],
+  );
+
   const handleAskAI = useCallback(() => {
     setIsAIMode((m) => !m);
     if (isAIMode) setIsAIGenerating(false);
@@ -979,6 +1121,14 @@ Content: ${m.snippet || "No content available"}`,
         isOpen={showGiphySelector}
         onClose={() => setShowGiphySelector(false)}
         onSelect={handleGifSelect}
+      />
+
+      <EnhancedScheduleMeetingPopup
+        isOpen={isScheduleMeetingOpen}
+        onClose={() => setIsScheduleMeetingOpen(false)}
+        onSave={handleMeetingSave}
+        participants={getAllThreadParticipants(messages)}
+        emailDateHeaders={getAllThreadEmailDateHeaders(messages)}
       />
     </>
   );

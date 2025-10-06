@@ -45,3 +45,4 @@ export default function AuthGuard({
   // Show nothing while redirecting
   return null;
 }
+

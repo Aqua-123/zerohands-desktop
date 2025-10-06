@@ -1,4 +1,3 @@
-import "isomorphic-fetch"; // required for MS Graph in Node
 import { google, gmail_v1 } from "googleapis";
 import type { Auth } from "googleapis";
 import { Client } from "@microsoft/microsoft-graph-client";
@@ -7,6 +6,7 @@ import {
   DatabaseService,
   CreateEmailThreadData,
   CreateEmailData,
+  CreateEmailAttachmentData,
 } from "./database";
 import {
   AuthProvider,
@@ -139,6 +139,67 @@ export class EmailService {
     }
   }
 
+  async performInitialSync(
+    userId: string,
+    onProgress?: (progress: {
+      processed: number;
+      total: number;
+      currentEmail: string;
+    }) => void,
+    onEmailProcessed?: (email: EmailThread) => void,
+  ): Promise<{ newEmailsCount: number; totalEmailsCount: number }> {
+    try {
+      console.log(`[INITIAL_SYNC] Starting initial sync for user: ${userId}`);
+      const user = await this.databaseService.findUserByEmail(userId);
+      if (!user) throw new Error("User not found");
+
+      // Calculate date range for past 1 month
+      const oneMonthAgo = new Date();
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      const dateFilter = oneMonthAgo.toISOString().split("T")[0]; // YYYY-MM-DD format
+
+      let allEmails: EmailThread[] = [];
+
+      if (user.provider === AuthProvider.GOOGLE) {
+        allEmails = await this.getGmailInitialSync(
+          user.accessToken,
+          user.id,
+          dateFilter,
+          onProgress,
+        );
+      } else if (user.provider === AuthProvider.OUTLOOK) {
+        allEmails = await this.getOutlookInitialSync(
+          user.accessToken,
+          user.id,
+          dateFilter,
+          onProgress,
+        );
+      } else {
+        throw new Error("Unsupported email provider");
+      }
+
+      if (allEmails.length) {
+        console.log(
+          `[INITIAL_SYNC] Saving ${allEmails.length} emails to database`,
+        );
+        // Pass the callback to send real-time updates as emails are saved
+        await this.saveEmailsToDatabase(user.id, allEmails, onEmailProcessed);
+      }
+
+      console.log(
+        `[INITIAL_SYNC] Completed initial sync for user: ${userId}, processed ${allEmails.length} emails`,
+      );
+
+      return {
+        newEmailsCount: allEmails.length,
+        totalEmailsCount: allEmails.length,
+      };
+    } catch (error) {
+      console.error(`[INITIAL_SYNC] Error:`, error);
+      throw error;
+    }
+  }
+
   async getInboxEmailsFromDB(
     userId: string,
     limit: number = 25,
@@ -176,6 +237,116 @@ export class EmailService {
   }
 
   // --------------- Gmail (SDK) ---------------
+
+  private async getGmailInitialSync(
+    accessToken: string,
+    userId: string,
+    dateFilter: string,
+    onProgress?: (progress: {
+      processed: number;
+      total: number;
+      currentEmail: string;
+    }) => void,
+  ): Promise<EmailThread[]> {
+    const gmail = gmailClientFromAccessToken(accessToken);
+    const emailThreads: EmailThread[] = [];
+
+    try {
+      console.log(
+        `[GMAIL_INITIAL_SYNC] Starting initial sync from ${dateFilter}`,
+      );
+
+      // First, get all thread IDs from the past month
+      let pageToken: string | undefined;
+      let totalThreads = 0;
+      const allThreadIds: string[] = [];
+
+      do {
+        const listRes = await gmail.users.threads.list({
+          userId: "me",
+          q: `after:${dateFilter}`,
+          maxResults: 100,
+          pageToken,
+        });
+
+        const threads = listRes.data.threads || [];
+        allThreadIds.push(...threads.map((t) => t.id!));
+        totalThreads += threads.length;
+        pageToken = listRes.data.nextPageToken;
+
+        console.log(
+          `[GMAIL_INITIAL_SYNC] Found ${totalThreads} threads so far...`,
+        );
+      } while (pageToken);
+
+      console.log(
+        `[GMAIL_INITIAL_SYNC] Total threads to process: ${totalThreads}`,
+      );
+
+      // Process threads in parallel batches
+      const batchSize = 5; // Smaller batch size for initial sync to avoid rate limits
+      const threadBatches = this.chunkArray(allThreadIds, batchSize);
+
+      for (
+        let batchIndex = 0;
+        batchIndex < threadBatches.length;
+        batchIndex++
+      ) {
+        const batch = threadBatches[batchIndex];
+        const batchPromises = batch.map(async (id) => {
+          try {
+            const res = await gmail.users.threads.get({
+              userId: "me",
+              id,
+              format: "full",
+            });
+            return this.parseGmailThread(res.data);
+          } catch (error) {
+            console.error(
+              `[GMAIL_INITIAL_SYNC] Failed to fetch thread ${id}:`,
+              error,
+            );
+            return null;
+          }
+        });
+
+        const batchResults = await Promise.allSettled(batchPromises);
+        const validThreads = batchResults
+          .filter(
+            (result): result is PromiseFulfilledResult<EmailThread | null> =>
+              result.status === "fulfilled" && result.value !== null,
+          )
+          .map((result) => result.value)
+          .filter((thread): thread is EmailThread => thread !== null);
+
+        emailThreads.push(...validThreads);
+
+        // Report progress
+        const processed = Math.min((batchIndex + 1) * batchSize, totalThreads);
+        if (onProgress && validThreads.length > 0) {
+          onProgress({
+            processed,
+            total: totalThreads,
+            currentEmail: validThreads[0].subject || "Processing...",
+          });
+        }
+
+        // Add a small delay between batches to avoid rate limits
+        if (batchIndex < threadBatches.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      console.log(
+        `[GMAIL_INITIAL_SYNC] Completed processing ${emailThreads.length} threads`,
+      );
+    } catch (error) {
+      console.error(`[GMAIL_INITIAL_SYNC] Error:`, error);
+      throw error;
+    }
+
+    return emailThreads;
+  }
 
   private async getGmailIncrementalSync(
     accessToken: string,
@@ -646,6 +817,113 @@ export class EmailService {
 
   // --------------- Outlook / Microsoft Graph (SDK) ---------------
 
+  private async getOutlookInitialSync(
+    accessToken: string,
+    userId: string,
+    dateFilter: string,
+    onProgress?: (progress: {
+      processed: number;
+      total: number;
+      currentEmail: string;
+    }) => void,
+  ): Promise<EmailThread[]> {
+    const client = graphClientFromAccessToken(accessToken);
+    const emailThreads: EmailThread[] = [];
+
+    try {
+      console.log(
+        `[OUTLOOK_INITIAL_SYNC] Starting initial sync from ${dateFilter}`,
+      );
+
+      // Get all messages from the past month
+      let skip = 0;
+      const pageSize = 50;
+      let hasMore = true;
+      let totalProcessed = 0;
+
+      while (hasMore) {
+        const messages = await client
+          .api("/me/messages")
+          .filter(`receivedDateTime ge ${dateFilter}T00:00:00Z`)
+          .top(pageSize)
+          .skip(skip)
+          .get();
+
+        const messageList = messages.value || [];
+        if (messageList.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        console.log(
+          `[OUTLOOK_INITIAL_SYNC] Processing batch ${Math.floor(skip / pageSize) + 1}, ${messageList.length} messages`,
+        );
+
+        // Process messages in parallel batches
+        const batchSize = 10;
+        const messageBatches = this.chunkArray(messageList, batchSize);
+
+        for (
+          let batchIndex = 0;
+          batchIndex < messageBatches.length;
+          batchIndex++
+        ) {
+          const batch = messageBatches[batchIndex];
+          const batchPromises = batch.map(async (message) => {
+            try {
+              return await this.parseOutlookMessage(message, accessToken);
+            } catch (error) {
+              console.error(
+                `[OUTLOOK_INITIAL_SYNC] Failed to parse message ${message.id}:`,
+                error,
+              );
+              return null;
+            }
+          });
+
+          const batchResults = await Promise.allSettled(batchPromises);
+          const validThreads = batchResults
+            .filter(
+              (result): result is PromiseFulfilledResult<EmailThread | null> =>
+                result.status === "fulfilled" && result.value !== null,
+            )
+            .map((result) => result.value)
+            .filter((thread): thread is EmailThread => thread !== null);
+
+          emailThreads.push(...validThreads);
+          totalProcessed += batch.length;
+
+          // Report progress
+          if (onProgress && validThreads.length > 0) {
+            onProgress({
+              processed: totalProcessed,
+              total:
+                totalProcessed + (messages["@odata.nextLink"] ? pageSize : 0),
+              currentEmail: validThreads[0].subject || "Processing...",
+            });
+          }
+
+          // Add a small delay between batches to avoid rate limits
+          if (batchIndex < messageBatches.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        }
+
+        skip += pageSize;
+        hasMore = !!messages["@odata.nextLink"];
+      }
+
+      console.log(
+        `[OUTLOOK_INITIAL_SYNC] Completed processing ${emailThreads.length} threads`,
+      );
+    } catch (error) {
+      console.error(`[OUTLOOK_INITIAL_SYNC] Error:`, error);
+      throw error;
+    }
+
+    return emailThreads;
+  }
+
   private async getOutlookIncrementalSync(
     accessToken: string,
     userId: string,
@@ -665,7 +943,10 @@ export class EmailService {
         .get();
 
       const messages: OutlookMessageData[] = data.value || [];
-      return messages.map((m) => this.parseOutlookMessage(m));
+      const parsedMessages = await Promise.all(
+        messages.map((m) => this.parseOutlookMessage(m, accessToken)),
+      );
+      return parsedMessages;
     }
 
     const delta = await client
@@ -694,7 +975,10 @@ export class EmailService {
       }
     }
 
-    return newOnes.map((m) => this.parseOutlookMessage(m));
+    const parsedMessages = await Promise.all(
+      newOnes.map((m) => this.parseOutlookMessage(m, accessToken)),
+    );
+    return parsedMessages;
   }
 
   private async getOutlookInbox(
@@ -712,8 +996,10 @@ export class EmailService {
       .query(skip ? { $skip: skip } : {})
       .get();
 
-    const emails: EmailThread[] = (data.value as OutlookMessageData[]).map(
-      (m) => this.parseOutlookMessage(m),
+    const emails: EmailThread[] = await Promise.all(
+      (data.value as OutlookMessageData[]).map((m) =>
+        this.parseOutlookMessage(m, accessToken),
+      ),
     );
 
     const nextPageToken =
@@ -732,7 +1018,7 @@ export class EmailService {
     const data = (await client
       .api(`/me/messages/${messageId}`)
       .get()) as OutlookMessageData;
-    return this.parseOutlookMessageContent(data);
+    return this.parseOutlookMessageContent(data, accessToken);
   }
 
   private async markOutlookMessageAsRead(
@@ -1065,6 +1351,11 @@ export class EmailService {
           `[EMAIL_SERVICE] Found email content in database: ${messageId}`,
         );
 
+        // Get attachments for this email
+        const attachments = await this.databaseService.getEmailAttachments(
+          dbEmail.id,
+        );
+
         // Convert database email to EmailMessage format
         return {
           id: dbEmail.externalId,
@@ -1077,6 +1368,13 @@ export class EmailService {
           timestamp: dbEmail.timestamp,
           body: dbEmail.body,
           htmlBody: dbEmail.htmlBody || undefined,
+          attachments: attachments.map((att) => ({
+            id: att.externalId,
+            filename: att.filename,
+            mimeType: att.mimeType,
+            size: att.size,
+            downloadUrl: att.downloadUrl || undefined,
+          })),
           isRead: dbEmail.isRead,
         };
       }
@@ -1141,20 +1439,36 @@ export class EmailService {
       `[EMAIL_SERVICE] Found ${dbEmails.length} emails in thread from database`,
     );
 
-    // Convert database emails to EmailMessage format
-    return dbEmails.map((email) => ({
-      id: email.externalId,
-      threadId: email.threadId,
-      subject: email.subject,
-      sender: email.sender,
-      senderEmail: email.senderEmail,
-      recipient: email.recipient,
-      recipientEmail: email.recipientEmail,
-      timestamp: email.timestamp,
-      body: email.body,
-      htmlBody: email.htmlBody || undefined,
-      isRead: email.isRead,
-    }));
+    // Convert database emails to EmailMessage format with attachments
+    const emailsWithAttachments = await Promise.all(
+      dbEmails.map(async (email) => {
+        const attachments = await this.databaseService.getEmailAttachments(
+          email.id,
+        );
+        return {
+          id: email.externalId,
+          threadId: email.threadId,
+          subject: email.subject,
+          sender: email.sender,
+          senderEmail: email.senderEmail,
+          recipient: email.recipient,
+          recipientEmail: email.recipientEmail,
+          timestamp: email.timestamp,
+          body: email.body,
+          htmlBody: email.htmlBody || undefined,
+          attachments: attachments.map((att) => ({
+            id: att.externalId,
+            filename: att.filename,
+            mimeType: att.mimeType,
+            size: att.size,
+            downloadUrl: att.downloadUrl || undefined,
+          })),
+          isRead: email.isRead,
+        };
+      }),
+    );
+
+    return emailsWithAttachments;
   }
 
   private async saveEmailContentToDatabase(
@@ -1172,7 +1486,9 @@ export class EmailService {
         timestamp: email.timestamp,
         isRead: email.isRead,
         isImportant: false,
-        hasAttachments: false,
+        hasAttachments: Boolean(
+          email.attachments && email.attachments.length > 0,
+        ),
         userId,
       };
 
@@ -1195,7 +1511,37 @@ export class EmailService {
         emailThreadId: emailThread.id,
       };
 
-      await this.databaseService.upsertEmail(emailData);
+      const savedEmail = await this.databaseService.upsertEmail(emailData);
+
+      // Save attachments if they exist
+      if (email.attachments && email.attachments.length > 0) {
+        console.log(
+          `[EMAIL_SERVICE] Saving ${email.attachments.length} attachments for email: ${email.id}`,
+        );
+
+        for (const attachment of email.attachments) {
+          try {
+            const attachmentData: CreateEmailAttachmentData = {
+              externalId: attachment.id,
+              filename: attachment.filename,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+              downloadUrl: attachment.downloadUrl,
+              emailId: savedEmail.id,
+            };
+
+            await this.databaseService.upsertEmailAttachment(attachmentData);
+            console.log(
+              `[EMAIL_SERVICE] Successfully saved attachment: ${attachment.filename}`,
+            );
+          } catch (attachmentError) {
+            console.error(
+              `[EMAIL_SERVICE] Error saving attachment ${attachment.filename}:`,
+              attachmentError,
+            );
+          }
+        }
+      }
     } catch (e) {
       console.error("Error saving email content to database:", e);
     }
@@ -1231,6 +1577,37 @@ export class EmailService {
       console.log(
         `[EMAIL_SERVICE] Successfully saved email message: ${email.id}`,
       );
+
+      // Save attachments if they exist
+      if (email.attachments && email.attachments.length > 0) {
+        console.log(
+          `[EMAIL_SERVICE] Saving ${email.attachments.length} attachments for email: ${email.id}`,
+        );
+
+        for (const attachment of email.attachments) {
+          try {
+            const attachmentData: CreateEmailAttachmentData = {
+              externalId: attachment.id,
+              filename: attachment.filename,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+              downloadUrl: attachment.downloadUrl,
+              emailId: savedEmail.id,
+            };
+
+            await this.databaseService.upsertEmailAttachment(attachmentData);
+            console.log(
+              `[EMAIL_SERVICE] Successfully saved attachment: ${attachment.filename}`,
+            );
+          } catch (attachmentError) {
+            console.error(
+              `[EMAIL_SERVICE] Error saving attachment ${attachment.filename}:`,
+              attachmentError,
+            );
+          }
+        }
+      }
+
       return savedEmail;
     } catch (e) {
       console.error(`Error saving email message ${email.id} to database:`, e);
@@ -1417,6 +1794,7 @@ export class EmailService {
 
     const body = this.extractGmailBody(messageData.payload);
     const html = this.extractGmailHtmlBody(messageData.payload);
+    const attachments = this.extractGmailAttachments(messageData.payload);
 
     return {
       id: messageData.id!,
@@ -1429,17 +1807,24 @@ export class EmailService {
       timestamp: new Date(date),
       body: body || "",
       htmlBody: html,
+      attachments,
       isRead: !(messageData.labelIds || []).includes("UNREAD"),
     };
   }
 
-  private parseOutlookMessage(messageData: OutlookMessageData): EmailThread {
+  private async parseOutlookMessage(
+    messageData: OutlookMessageData,
+    accessToken?: string,
+  ): Promise<EmailThread> {
     const from = messageData.from?.emailAddress || {};
     const senderName = from.name || from.address || "Unknown";
     const senderEmail = from.address || "";
 
     // Parse the individual message content
-    const message = this.parseOutlookMessageContent(messageData);
+    const message = await this.parseOutlookMessageContent(
+      messageData,
+      accessToken,
+    );
 
     return {
       id: messageData.id,
@@ -1458,11 +1843,28 @@ export class EmailService {
     };
   }
 
-  private parseOutlookMessageContent(
+  private async parseOutlookMessageContent(
     messageData: OutlookMessageData,
-  ): EmailMessage {
+    accessToken?: string,
+  ): Promise<EmailMessage> {
     const from = messageData.from?.emailAddress || {};
     const to = messageData.toRecipients?.[0]?.emailAddress || {};
+
+    // Fetch attachments if access token is provided
+    let attachments: EmailAttachment[] = [];
+    if (accessToken && messageData.hasAttachments) {
+      try {
+        attachments = await this.getOutlookAttachments(
+          accessToken,
+          messageData.id,
+        );
+      } catch (error) {
+        console.error(
+          `[OUTLOOK_PARSE] Error fetching attachments for message ${messageData.id}:`,
+          error,
+        );
+      }
+    }
 
     return {
       id: messageData.id,
@@ -1478,6 +1880,7 @@ export class EmailService {
         messageData.body?.contentType?.toLowerCase() === "html"
           ? messageData.body?.content
           : undefined,
+      attachments,
       isRead: messageData.isRead,
     };
   }
@@ -1517,5 +1920,87 @@ export class EmailService {
       }
     }
     return undefined;
+  }
+
+  private extractGmailAttachments(
+    payload?: gmail_v1.Schema$MessagePart,
+  ): EmailAttachment[] {
+    const attachments: EmailAttachment[] = [];
+
+    if (!payload) return attachments;
+
+    // Check if this part itself is an attachment
+    if (payload.filename && payload.body?.attachmentId) {
+      attachments.push({
+        id: payload.body.attachmentId,
+        filename: payload.filename,
+        mimeType: payload.mimeType || "application/octet-stream",
+        size: payload.body.size || 0,
+        downloadUrl: undefined, // Will be set when we fetch the attachment
+      });
+    }
+
+    // Recursively check nested parts
+    if (payload.parts) {
+      for (const part of payload.parts) {
+        const nestedAttachments = this.extractGmailAttachments(part);
+        attachments.push(...nestedAttachments);
+      }
+    }
+
+    return attachments;
+  }
+
+  private async getGmailAttachmentDownloadUrl(
+    accessToken: string,
+    messageId: string,
+    attachmentId: string,
+  ): Promise<string> {
+    const gmail = gmailClientFromAccessToken(accessToken);
+    await gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId,
+      id: attachmentId,
+    });
+
+    // Gmail returns the attachment data directly, not a download URL
+    // We'll store the attachment data or create a temporary download URL
+    // For now, we'll return a placeholder that indicates we have the data
+    return `gmail://${messageId}/${attachmentId}`;
+  }
+
+  private async getOutlookAttachments(
+    accessToken: string,
+    messageId: string,
+  ): Promise<EmailAttachment[]> {
+    const client = graphClientFromAccessToken(accessToken);
+    const attachments: EmailAttachment[] = [];
+
+    try {
+      const data = await client
+        .api(`/me/messages/${messageId}/attachments`)
+        .get();
+
+      if (data.value && Array.isArray(data.value)) {
+        for (const attachment of data.value) {
+          attachments.push({
+            id: attachment.id,
+            filename: attachment.name || "unknown",
+            mimeType: attachment.contentType || "application/octet-stream",
+            size: attachment.size || 0,
+            downloadUrl: attachment.contentBytes
+              ? `data:${attachment.contentType};base64,${attachment.contentBytes}`
+              : undefined,
+          });
+        }
+      }
+    } catch (error) {
+      console.error(
+        `[OUTLOOK_ATTACHMENTS] Error fetching attachments for message ${messageId}:`,
+        error,
+      );
+    }
+
+    return attachments;
   }
 }

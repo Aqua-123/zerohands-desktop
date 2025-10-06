@@ -18,6 +18,12 @@ export function registerOAuthListeners(mainWindow: BrowserWindow) {
     try {
       const result = await googleOAuthService.authenticate();
 
+      // Check if user exists before upserting
+      const existingUser = await databaseService.findUserByEmail(
+        result.userInfo.email,
+      );
+      const isNewUser = !existingUser;
+
       // Save or update user in database
       await databaseService.upsertUser({
         email: result.userInfo.email,
@@ -34,8 +40,11 @@ export function registerOAuthListeners(mainWindow: BrowserWindow) {
         verifiedEmail: result.userInfo.verified_email,
       });
 
-      // Send success event to renderer
-      mainWindow.webContents.send(OAUTH_CHANNELS.OAUTH_AUTHENTICATED, result);
+      // Send success event to renderer with new user flag
+      mainWindow.webContents.send(OAUTH_CHANNELS.OAUTH_AUTHENTICATED, {
+        ...result,
+        isNewUser,
+      });
 
       return result;
     } catch (error) {
@@ -78,6 +87,12 @@ export function registerOAuthListeners(mainWindow: BrowserWindow) {
     try {
       const result = await outlookOAuthService.authenticate();
 
+      // Check if user exists before upserting
+      const existingUser = await databaseService.findUserByEmail(
+        result.userInfo.email,
+      );
+      const isNewUser = !existingUser;
+
       // Save or update user in database
       await databaseService.upsertUser({
         email: result.userInfo.email,
@@ -94,8 +109,11 @@ export function registerOAuthListeners(mainWindow: BrowserWindow) {
         verifiedEmail: result.userInfo.verified_email,
       });
 
-      // Send success event to renderer
-      mainWindow.webContents.send(OAUTH_CHANNELS.OAUTH_AUTHENTICATED, result);
+      // Send success event to renderer with new user flag
+      mainWindow.webContents.send(OAUTH_CHANNELS.OAUTH_AUTHENTICATED, {
+        ...result,
+        isNewUser,
+      });
 
       return result;
     } catch (error) {

@@ -61,6 +61,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         // Validate the stored user data
         if (userData && userData.email && userData.provider) {
+          // Optionally validate user exists in database
+          // This could be done by making a simple API call
+          // For now, we'll trust the localStorage data and let the email service handle validation
           setUser(userData);
           console.log("Restored authentication state:", userData);
         } else {
@@ -84,7 +87,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Listen for OAuth events from the main process
   useEffect(() => {
     if (window.oauth) {
-      const handleOAuthSuccess = (data: any) => {
+      const handleOAuthSuccess = async (data: {
+        tokens: OAuthTokens;
+        userInfo: GoogleUserInfo;
+        isNewUser?: boolean;
+      }) => {
         if (data.userInfo) {
           const authUser: AuthUser = {
             id: data.userInfo.id,
@@ -94,6 +101,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
             provider: data.userInfo.provider || "GOOGLE", // Default to Google if not specified
           };
           signIn(authUser);
+
+          // Trigger initial sync for new users
+          if (data.isNewUser && window.email) {
+            console.log("New user detected, starting initial sync...");
+            try {
+              await window.email.performInitialSync(
+                data.userInfo.email,
+                (email) => {
+                  // This callback will be called for each email as it's processed
+                  console.log(`Email processed: ${email.subject}`);
+                  // The email will automatically appear in the UI via the existing notification system
+                },
+              );
+              console.log("Initial sync completed successfully");
+            } catch (error) {
+              console.error("Initial sync failed:", error);
+            }
+          }
+
           navigate({ to: "/emails" });
         }
       };
@@ -112,6 +138,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
       };
     }
   }, [navigate]);
+
+  // Listen for email errors that indicate user not found
+  useEffect(() => {
+    if (window.email) {
+      const handleEmailError = (error: string) => {
+        console.error("Email error:", error);
+
+        // If user not found in database, sign out automatically
+        if (error === "USER_NOT_FOUND") {
+          console.log("User not found in database, signing out...");
+          signOut();
+        }
+      };
+
+      window.email.onEmailError(handleEmailError);
+
+      // Cleanup listeners on unmount
+      return () => {
+        // Note: The actual cleanup would depend on how the email listeners are implemented
+        // This is a placeholder for cleanup
+      };
+    }
+  }, [signOut]);
 
   const value: AuthContextType = {
     user,

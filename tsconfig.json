@@ -28,5 +28,6 @@
     "./forge.config.ts",
     "*.mts",
     "vite.renderer.config.mts"
-  ]
+  ],
+  "typeRoots": ["./node_modules/@types", "./src"]
 }

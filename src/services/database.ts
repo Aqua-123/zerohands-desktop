@@ -5,6 +5,7 @@ import {
   EmailThread,
   Email,
   EmailThreadLabel,
+  EmailAttachment,
   Prisma,
 } from "@prisma/client";
 
@@ -56,6 +57,15 @@ export interface CreateEmailData {
   isRead: boolean;
   userId: string;
   emailThreadId: string;
+}
+
+export interface CreateEmailAttachmentData {
+  externalId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  downloadUrl?: string;
+  emailId: string;
 }
 
 let prisma: PrismaClient | null = null;
@@ -872,6 +882,121 @@ export class DatabaseService {
         error,
       );
       return null;
+    }
+  }
+
+  // Email Attachment methods
+  async upsertEmailAttachment(
+    attachmentData: CreateEmailAttachmentData,
+  ): Promise<EmailAttachment> {
+    try {
+      console.log(
+        `[DATABASE] Upserting email attachment: ${attachmentData.externalId} - "${attachmentData.filename}" for emailId: ${attachmentData.emailId}`,
+      );
+
+      const result = await this.prisma.emailAttachment.upsert({
+        where: {
+          emailId_externalId: {
+            emailId: attachmentData.emailId,
+            externalId: attachmentData.externalId,
+          },
+        },
+        update: {
+          filename: attachmentData.filename,
+          mimeType: attachmentData.mimeType,
+          size: attachmentData.size,
+          downloadUrl: attachmentData.downloadUrl,
+          updatedAt: new Date(),
+        },
+        create: attachmentData,
+      });
+
+      console.log(
+        `[DATABASE] Successfully upserted email attachment: ${result.id} (${result.externalId})`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error upserting email attachment ${attachmentData.externalId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async getEmailAttachments(emailId: string): Promise<EmailAttachment[]> {
+    try {
+      console.log(
+        `[DATABASE] Getting email attachments for emailId: ${emailId}`,
+      );
+
+      const result = await this.prisma.emailAttachment.findMany({
+        where: { emailId },
+        orderBy: { createdAt: "asc" },
+      });
+
+      console.log(
+        `[DATABASE] Found ${result.length} attachments for emailId: ${emailId}`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error getting email attachments for emailId ${emailId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async deleteEmailAttachment(
+    emailId: string,
+    externalId: string,
+  ): Promise<void> {
+    try {
+      console.log(
+        `[DATABASE] Deleting email attachment: ${externalId} for emailId: ${emailId}`,
+      );
+
+      await this.prisma.emailAttachment.delete({
+        where: {
+          emailId_externalId: {
+            emailId,
+            externalId,
+          },
+        },
+      });
+
+      console.log(
+        `[DATABASE] Successfully deleted email attachment: ${externalId}`,
+      );
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error deleting email attachment ${externalId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async deleteAllEmailAttachments(emailId: string): Promise<void> {
+    try {
+      console.log(
+        `[DATABASE] Deleting all email attachments for emailId: ${emailId}`,
+      );
+
+      await this.prisma.emailAttachment.deleteMany({
+        where: { emailId },
+      });
+
+      console.log(
+        `[DATABASE] Successfully deleted all attachments for emailId: ${emailId}`,
+      );
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error deleting all email attachments for emailId ${emailId}:`,
+        error,
+      );
+      throw error;
     }
   }
 

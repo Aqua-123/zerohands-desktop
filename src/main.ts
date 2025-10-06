@@ -68,4 +68,3 @@ app.on("activate", () => {
     createWindow();
   }
 });
-//osX only ends

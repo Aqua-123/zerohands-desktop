@@ -34,10 +34,7 @@ export default function EmailContent({
 
     setIsLoadingThread(true);
     try {
-      // Import the email service dynamically to avoid circular dependencies
-      const { EmailService } = await import("../services/email");
-      const emailService = new EmailService();
-      const emails = await emailService.getThreadEmails(
+      const emails = await window.email.getThreadEmails(
         userEmail,
         email.threadId,
       );

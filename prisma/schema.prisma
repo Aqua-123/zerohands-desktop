@@ -56,7 +56,7 @@ model EmailThread {
 }
 
 model Email {
-  id             String       @id @default(cuid())
+  id             String            @id @default(cuid())
   externalId     String
   threadId       String
   subject        String
@@ -67,15 +67,16 @@ model Email {
   timestamp      DateTime
   body           String
   htmlBody       String?
-  isRead         Boolean      @default(false)
-  isLabeled      Boolean      @default(false)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  isRead         Boolean           @default(false)
+  isLabeled      Boolean           @default(false)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
   userId         String
   emailThreadId  String
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  emailThread    EmailThread  @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailThread    EmailThread       @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
   labels         EmailLabel[]
+  attachments    EmailAttachment[]
 
   @@unique([userId, externalId])
   @@index([userId, timestamp])
@@ -102,6 +103,22 @@ model EmailLabel {
   email     Email    @relation(fields: [emailId], references: [id], onDelete: Cascade)
 
   @@unique([emailId, label])
+  @@index([emailId])
+}
+
+model EmailAttachment {
+  id          String   @id @default(cuid())
+  externalId  String // External attachment ID from Gmail/Outlook
+  filename    String
+  mimeType    String
+  size        Int // Size in bytes
+  downloadUrl String? // URL to download the attachment (if available)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  emailId     String
+  email       Email    @relation(fields: [emailId], references: [id], onDelete: Cascade)
+
+  @@unique([emailId, externalId])
   @@index([emailId])
 }
 
