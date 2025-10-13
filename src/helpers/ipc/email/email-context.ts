@@ -31,6 +31,16 @@ export interface EmailContext {
     limit?: number,
     offset?: number,
   ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
+  getImportantEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
+  getVIPEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
   processAndLabelEmails: (
     userEmail: string,
     onEmailProcessed?: (email: EmailThread) => void,
@@ -49,6 +59,15 @@ export interface EmailContext {
     labels: string[],
     operation?: "add" | "remove" | "replace",
   ) => Promise<{ success: boolean }>;
+  downloadAttachment: (
+    userEmail: string,
+    messageId: string,
+    attachmentId: string,
+  ) => Promise<{
+    data: string; // base64 encoded data
+    filename: string;
+    mimeType: string;
+  }>;
   onEmailError: (callback: (error: string) => void) => void;
   onNewEmailNotification: (
     callback: (data: { userEmail: string; newEmails: EmailThread[] }) => void,
@@ -108,6 +127,24 @@ const emailContext: EmailContext = {
   getInboxEmailsFromDB: (userEmail: string, limit?: number, offset?: number) =>
     ipcRenderer.invoke(
       EMAIL_CHANNELS.GET_INBOX_EMAILS_FROM_DB,
+      userEmail,
+      limit,
+      offset,
+    ),
+  getImportantEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) =>
+    ipcRenderer.invoke(
+      EMAIL_CHANNELS.GET_IMPORTANT_EMAILS_FROM_DB,
+      userEmail,
+      limit,
+      offset,
+    ),
+  getVIPEmailsFromDB: (userEmail: string, limit?: number, offset?: number) =>
+    ipcRenderer.invoke(
+      EMAIL_CHANNELS.GET_VIP_EMAILS_FROM_DB,
       userEmail,
       limit,
       offset,
@@ -176,6 +213,17 @@ const emailContext: EmailContext = {
       messageId,
       labels,
       operation,
+    ),
+  downloadAttachment: (
+    userEmail: string,
+    messageId: string,
+    attachmentId: string,
+  ) =>
+    ipcRenderer.invoke(
+      EMAIL_CHANNELS.DOWNLOAD_ATTACHMENT,
+      userEmail,
+      messageId,
+      attachmentId,
     ),
   onEmailError: (callback) => {
     ipcRenderer.on(EMAIL_CHANNELS.EMAIL_ERROR, (_, error) => callback(error));

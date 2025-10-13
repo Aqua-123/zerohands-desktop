@@ -304,4 +304,75 @@ export function registerEmailListeners(mainWindow: BrowserWindow) {
       }
     },
   );
+
+  ipcMain.handle(
+    EMAIL_CHANNELS.GET_IMPORTANT_EMAILS_FROM_DB,
+    async (_, userEmail: string, limit?: number, offset?: number) => {
+      try {
+        console.log(
+          `[IPC_EMAIL] Fetching IMPORTANT emails from DB for ${userEmail}, limit: ${limit}, offset: ${offset}`,
+        );
+        return await emailService.getImportantEmailsFromDB(
+          userEmail,
+          limit,
+          offset,
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch important emails from database";
+        mainWindow.webContents.send(EMAIL_CHANNELS.EMAIL_ERROR, errorMessage);
+        throw error;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    EMAIL_CHANNELS.GET_VIP_EMAILS_FROM_DB,
+    async (_, userEmail: string, limit?: number, offset?: number) => {
+      try {
+        console.log(
+          `[IPC_EMAIL] Fetching VIP emails from DB for ${userEmail}, limit: ${limit}, offset: ${offset}`,
+        );
+        return await emailService.getVIPEmailsFromDB(userEmail, limit, offset);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch VIP emails from database";
+        mainWindow.webContents.send(EMAIL_CHANNELS.EMAIL_ERROR, errorMessage);
+        throw error;
+      }
+    },
+  );
+
+  // Download attachment
+  ipcMain.handle(
+    EMAIL_CHANNELS.DOWNLOAD_ATTACHMENT,
+    async (
+      _,
+      userEmail: string,
+      messageId: string,
+      attachmentId: string,
+    ) => {
+      try {
+        console.log(
+          `[IPC_EMAIL] Downloading attachment ${attachmentId} from message ${messageId}`,
+        );
+        return await emailService.downloadAttachment(
+          userEmail,
+          messageId,
+          attachmentId,
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Failed to download attachment";
+        mainWindow.webContents.send(EMAIL_CHANNELS.EMAIL_ERROR, errorMessage);
+        throw error;
+      }
+    },
+  );
 }

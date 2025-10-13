@@ -7,22 +7,20 @@ import AuthGuard from "@/components/AuthGuard";
 function EmailsPage() {
   const { user } = useAuth();
 
-  if (!user) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <AuthGuard requireAuth={true} requireOnboarding={true}>
-      <div className="h-full">
-        <EmailInterface userEmail={user.email} userProvider={user.provider} />
-      </div>
+      {user ? (
+        <div className="h-full">
+          <EmailInterface userEmail={user.email} userProvider={user.provider} />
+        </div>
+      ) : (
+        <div className="flex h-full items-center justify-center">
+          <div className="text-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
+            <p className="mt-2 text-gray-600 dark:text-gray-400">Loading...</p>
+          </div>
+        </div>
+      )}
     </AuthGuard>
   );
 }

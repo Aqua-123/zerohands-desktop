@@ -235,6 +235,110 @@ export class EmailService {
       user.id,
       true,
     );
+
+    return { emails, hasMore: offset + emails.length < totalCount };
+  }
+
+  async getImportantEmailsFromDB(
+    userId: string,
+    limit: number = 25,
+    offset: number = 0,
+  ): Promise<{ emails: EmailThread[]; hasMore: boolean }> {
+    const user = await this.databaseService.findUserByEmail(userId);
+    if (!user) throw new Error("User not found");
+
+    const dbThreads = await this.databaseService.getImportantEmailThreads(
+      user.id,
+      limit,
+      offset,
+    );
+    const emails: EmailThread[] = dbThreads.map((t) => ({
+      id: t.externalId,
+      subject: t.subject,
+      sender: t.sender,
+      senderEmail: t.senderEmail,
+      preview: t.preview,
+      timestamp: t.timestamp,
+      isRead: t.isRead,
+      isImportant: t.isImportant,
+      hasAttachments: t.hasAttachments,
+      labels: t.labels?.map((l) => l.label) || [],
+    }));
+
+    // For Important section, we only show what's in DB (last 1 month from initial sync)
+    const hasMore = emails.length === limit;
+
+    return { emails, hasMore };
+  }
+
+  async getVIPEmailsFromDB(
+    userId: string,
+    limit: number = 25,
+    offset: number = 0,
+  ): Promise<{ emails: EmailThread[]; hasMore: boolean }> {
+    const user = await this.databaseService.findUserByEmail(userId);
+    if (!user) throw new Error("User not found");
+
+    // Get VIP contacts and domains from user's onboarding data
+    const vipEmails = user.vipContacts ? JSON.parse(user.vipContacts) : [];
+    const vipDomains = user.vipDomains ? JSON.parse(user.vipDomains) : [];
+
+    const dbThreads = await this.databaseService.getVIPEmailThreads(
+      user.id,
+      vipEmails,
+      vipDomains,
+      limit,
+      offset,
+    );
+    const emails: EmailThread[] = dbThreads.map((t) => ({
+      id: t.externalId,
+      subject: t.subject,
+      sender: t.sender,
+      senderEmail: t.senderEmail,
+      preview: t.preview,
+      timestamp: t.timestamp,
+      isRead: t.isRead,
+      isImportant: t.isImportant,
+      hasAttachments: t.hasAttachments,
+      labels: t.labels?.map((l) => l.label) || [],
+    }));
+
+    const hasMore = emails.length === limit;
+
+    return { emails, hasMore };
+  }
+
+  async getInboxEmailsFromDB_OLD(
+    userId: string,
+    limit: number = 25,
+    offset: number = 0,
+  ): Promise<{ emails: EmailThread[]; hasMore: boolean }> {
+    const user = await this.databaseService.findUserByEmail(userId);
+    if (!user) throw new Error("User not found");
+
+    const dbThreads = await this.databaseService.getEmailThreadsByUser(
+      user.id,
+      limit,
+      offset,
+      true,
+    );
+    const emails: EmailThread[] = dbThreads.map((t) => ({
+      id: t.externalId,
+      subject: t.subject,
+      sender: t.sender,
+      senderEmail: t.senderEmail,
+      preview: t.preview,
+      timestamp: t.timestamp,
+      isRead: t.isRead,
+      isImportant: t.isImportant,
+      hasAttachments: t.hasAttachments,
+      labels: t.labels?.map((l) => l.label) || [],
+    }));
+
+    const totalCount = await this.databaseService.getEmailThreadCount(
+      user.id,
+      true,
+    );
     const hasMore = offset + dbThreads.length < totalCount;
 
     return { emails, hasMore };
@@ -2220,5 +2324,173 @@ export class EmailService {
     }
 
     return attachments;
+  }
+
+  /**
+   * Download an email attachment
+   */
+  async downloadAttachment(
+    userEmail: string,
+    messageId: string,
+    attachmentId: string,
+  ): Promise<{
+    data: string; // base64 encoded data
+    filename: string;
+    mimeType: string;
+  }> {
+    try {
+      const user = await this.databaseService.findUserByEmail(userEmail);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      console.log(
+        `[EMAIL_SERVICE] Downloading attachment ${attachmentId} from message ${messageId}`,
+      );
+
+      // Download based on provider
+      if (user.provider === "GOOGLE") {
+        return await this.downloadGmailAttachment(
+          user.accessToken,
+          messageId,
+          attachmentId,
+          user.id,
+        );
+      } else if (user.provider === "OUTLOOK") {
+        return await this.downloadOutlookAttachment(
+          user.accessToken,
+          messageId,
+          attachmentId,
+          user.id,
+        );
+      } else {
+        throw new Error(`Unsupported provider: ${user.provider}`);
+      }
+    } catch (error) {
+      console.error(
+        `[EMAIL_SERVICE] Error downloading attachment ${attachmentId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Download Gmail attachment
+   */
+  private async downloadGmailAttachment(
+    accessToken: string,
+    messageId: string,
+    attachmentId: string,
+    userId: string,
+  ): Promise<{
+    data: string;
+    filename: string;
+    mimeType: string;
+  }> {
+    try {
+      const gmail = gmailClientFromAccessToken(accessToken);
+
+      // Get attachment data
+      const attachmentResponse = await gmail.users.messages.attachments.get({
+        userId: "me",
+        messageId,
+        id: attachmentId,
+      });
+
+      // Get attachment metadata from database
+      const attachmentMeta = await this.databaseService.getEmailAttachmentByExternalId(
+        attachmentId,
+        userId,
+      );
+
+      if (!attachmentMeta) {
+        throw new Error("Attachment metadata not found in database");
+      }
+
+      // Gmail returns attachment data as base64url encoded
+      const data = attachmentResponse.data.data;
+      if (!data) {
+        throw new Error("No attachment data received from Gmail");
+      }
+
+      // Convert base64url to regular base64
+      const base64Data = data.replace(/-/g, "+").replace(/_/g, "/");
+
+      console.log(
+        `[EMAIL_SERVICE] Successfully downloaded Gmail attachment: ${attachmentMeta.filename}`,
+      );
+
+      return {
+        data: base64Data,
+        filename: attachmentMeta.filename,
+        mimeType: attachmentMeta.mimeType,
+      };
+    } catch (error) {
+      console.error(
+        `[EMAIL_SERVICE] Error downloading Gmail attachment ${attachmentId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Download Outlook attachment
+   */
+  private async downloadOutlookAttachment(
+    accessToken: string,
+    messageId: string,
+    attachmentId: string,
+    userId: string,
+  ): Promise<{
+    data: string;
+    filename: string;
+    mimeType: string;
+  }> {
+    try {
+      const client = graphClientFromAccessToken(accessToken);
+
+      // Get attachment data
+      const attachment = await client
+        .api(`/me/messages/${messageId}/attachments/${attachmentId}`)
+        .get();
+
+      if (!attachment) {
+        throw new Error("Attachment not found");
+      }
+
+      // Get attachment metadata from database
+      const attachmentMeta = await this.databaseService.getEmailAttachmentByExternalId(
+        attachmentId,
+        userId,
+      );
+
+      if (!attachmentMeta) {
+        throw new Error("Attachment metadata not found in database");
+      }
+
+      // Outlook returns attachment data as base64
+      const data = attachment.contentBytes;
+      if (!data) {
+        throw new Error("No attachment data received from Outlook");
+      }
+
+      console.log(
+        `[EMAIL_SERVICE] Successfully downloaded Outlook attachment: ${attachmentMeta.filename}`,
+      );
+
+      return {
+        data,
+        filename: attachmentMeta.filename,
+        mimeType: attachmentMeta.mimeType,
+      };
+    } catch (error) {
+      console.error(
+        `[EMAIL_SERVICE] Error downloading Outlook attachment ${attachmentId}:`,
+        error,
+      );
+      throw error;
+    }
   }
 }

@@ -342,6 +342,109 @@ export class DatabaseService {
     }
   }
 
+  async getImportantEmailThreads(
+    userId: string,
+    limit: number = 25,
+    offset: number = 0,
+  ): Promise<(EmailThread & { labels: EmailThreadLabel[] })[]> {
+    try {
+      console.log(
+        `[DATABASE] Getting IMPORTANT email threads for userId: ${userId}, limit: ${limit}, offset: ${offset}`,
+      );
+
+      const result = await this.prisma.emailThread.findMany({
+        where: {
+          userId,
+          isImportant: true,
+        },
+        include: {
+          labels: true,
+        },
+        orderBy: { timestamp: "desc" },
+        take: limit,
+        skip: offset,
+      });
+
+      console.log(
+        `[DATABASE] Found ${result.length} important email threads for userId: ${userId}`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error getting important email threads for userId ${userId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async getVIPEmailThreads(
+    userId: string,
+    vipEmails: string[],
+    vipDomains: string[],
+    limit: number = 25,
+    offset: number = 0,
+  ): Promise<(EmailThread & { labels: EmailThreadLabel[] })[]> {
+    try {
+      console.log(
+        `[DATABASE] Getting VIP email threads for userId: ${userId}, vipEmails: ${vipEmails.length}, vipDomains: ${vipDomains.length}, limit: ${limit}, offset: ${offset}`,
+      );
+
+      // Build OR conditions for VIP filtering
+      const orConditions: Prisma.EmailThreadWhereInput[] = [];
+
+      // Add conditions for specific VIP emails
+      if (vipEmails.length > 0) {
+        orConditions.push({
+          senderEmail: {
+            in: vipEmails.map((email) => email.toLowerCase()),
+          },
+        });
+      }
+
+      // Add conditions for VIP domains
+      if (vipDomains.length > 0) {
+        vipDomains.forEach((domain) => {
+          orConditions.push({
+            senderEmail: {
+              endsWith: `@${domain.toLowerCase()}`,
+            },
+          });
+        });
+      }
+
+      // If no VIP contacts or domains, return empty array
+      if (orConditions.length === 0) {
+        console.log(`[DATABASE] No VIP filters defined, returning empty array`);
+        return [];
+      }
+
+      const result = await this.prisma.emailThread.findMany({
+        where: {
+          userId,
+          OR: orConditions,
+        },
+        include: {
+          labels: true,
+        },
+        orderBy: { timestamp: "desc" },
+        take: limit,
+        skip: offset,
+      });
+
+      console.log(
+        `[DATABASE] Found ${result.length} VIP email threads for userId: ${userId}`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error getting VIP email threads for userId ${userId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
   async getEmailThreadByExternalId(
     userId: string,
     externalId: string,
@@ -958,6 +1061,53 @@ export class DatabaseService {
     } catch (error) {
       console.error(
         `[DATABASE] Error getting email attachments for emailId ${emailId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async getEmailAttachmentByExternalId(
+    externalId: string,
+    userId: string,
+  ): Promise<EmailAttachment | null> {
+    try {
+      console.log(
+        `[DATABASE] Getting email attachment by externalId: ${externalId} for userId: ${userId}`,
+      );
+
+      // First, find emails for this user
+      const emails = await this.prisma.email.findMany({
+        where: { userId },
+        select: { id: true },
+      });
+
+      const emailIds = emails.map((e) => e.id);
+
+      // Find attachment with matching externalId and belonging to user's emails
+      const result = await this.prisma.emailAttachment.findFirst({
+        where: {
+          externalId,
+          emailId: {
+            in: emailIds,
+          },
+        },
+      });
+
+      if (result) {
+        console.log(
+          `[DATABASE] Found email attachment: ${result.filename} for externalId: ${externalId}`,
+        );
+      } else {
+        console.log(
+          `[DATABASE] No attachment found for externalId: ${externalId}`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.error(
+        `[DATABASE] Error getting email attachment by externalId ${externalId}:`,
         error,
       );
       throw error;

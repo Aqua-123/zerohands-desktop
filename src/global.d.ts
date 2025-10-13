@@ -134,6 +134,16 @@ interface EmailContext {
     limit?: number,
     offset?: number,
   ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
+  getImportantEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
+  getVIPEmailsFromDB: (
+    userEmail: string,
+    limit?: number,
+    offset?: number,
+  ) => Promise<{ emails: EmailThread[]; hasMore: boolean }>;
   processAndLabelEmails: (
     userEmail: string,
     onEmailProcessed?: (email: EmailThread) => void,
@@ -145,10 +155,31 @@ interface EmailContext {
   performInitialSync: (
     userEmail: string,
     onEmailProcessed?: (email: EmailThread) => void,
-  ) => Promise<void>;
+  ) => Promise<{ newEmailsCount: number; totalEmailsCount: number }>;
+  updateMessageLabels: (
+    userEmail: string,
+    messageId: string,
+    labels: string[],
+    operation?: "add" | "remove" | "replace",
+  ) => Promise<{ success: boolean }>;
+  downloadAttachment: (
+    userEmail: string,
+    messageId: string,
+    attachmentId: string,
+  ) => Promise<{
+    data: string; // base64 encoded data
+    filename: string;
+    mimeType: string;
+  }>;
   onEmailError: (callback: (error: string) => void) => void;
   onNewEmailNotification: (
     callback: (data: { userEmail: string; newEmails: EmailThread[] }) => void,
+  ) => void;
+  onInitialSyncProgress: (
+    callback: (data: {
+      userEmail: string;
+      progress: { processed: number; total: number; currentEmail: string };
+    }) => void,
   ) => void;
 }
 

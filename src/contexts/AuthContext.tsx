@@ -122,22 +122,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
             return;
           }
 
-          // Trigger initial sync for new users (only if onboarding is completed)
-          if (data.isNewUser && window.email) {
-            console.log("New user detected, starting initial sync...");
-            try {
-              await window.email.performInitialSync(
-                data.userInfo.email,
-                (email) => {
-                  // This callback will be called for each email as it's processed
-                  console.log(`Email processed: ${email.subject}`);
-                  // The email will automatically appear in the UI via the existing notification system
-                },
-              );
-              console.log("Initial sync completed successfully");
-            } catch (error) {
-              console.error("Initial sync failed:", error);
-            }
+          // Trigger initial sync for users who have completed onboarding
+          // Note: New users will start sync during onboarding, so this handles returning users
+          if (window.email) {
+            console.log("Starting email sync in background...");
+            // Don't await - let it run in background
+            window.email
+              .performInitialSync(data.userInfo.email, (email) => {
+                console.log(`[Background Sync] Processed: ${email.subject}`);
+              })
+              .then(() => {
+                console.log("Background email sync completed");
+              })
+              .catch((error) => {
+                console.error("Background email sync failed:", error);
+              });
           }
 
           navigate({ to: "/emails" });

@@ -5,14 +5,18 @@ import EmailCompose from "./EmailCompose";
 import { EmailThread, EmailMessage } from "../services/email";
 import { WebSocketClient } from "../services/websocket-client";
 
+export type EmailSection = "all" | "important" | "vip";
+
 interface EmailInterfaceProps {
   userEmail: string;
   userProvider?: string;
+  section?: EmailSection;
 }
 
 export default function EmailInterface({
   userEmail,
   userProvider,
+  section = "all",
 }: EmailInterfaceProps) {
   const [emails, setEmails] = useState<EmailThread[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
@@ -131,21 +135,48 @@ export default function EmailInterface({
         throw new Error("Email service not available");
       }
 
-      // First, try to get emails from database
+      // Fetch emails based on section type
       try {
-        const dbResult = await window.email.getInboxEmailsFromDB(
-          userEmail,
-          25,
-          reset ? 0 : emails.length,
-        );
+        let dbResult: { emails: EmailThread[]; hasMore: boolean };
+
+        // Choose the appropriate fetching method based on section
+        if (section === "important") {
+          console.log(`[EMAIL_INTERFACE] Fetching IMPORTANT emails from DB`);
+          dbResult = await window.email.getImportantEmailsFromDB(
+            userEmail,
+            25,
+            reset ? 0 : emails.length,
+          );
+        } else if (section === "vip") {
+          console.log(`[EMAIL_INTERFACE] Fetching VIP emails from DB`);
+          dbResult = await window.email.getVIPEmailsFromDB(
+            userEmail,
+            25,
+            reset ? 0 : emails.length,
+          );
+        } else {
+          // section === "all"
+          console.log(`[EMAIL_INTERFACE] Fetching ALL emails from DB`);
+          dbResult = await window.email.getInboxEmailsFromDB(
+            userEmail,
+            25,
+            reset ? 0 : emails.length,
+          );
+        }
 
         console.log(
-          `[EMAIL_INTERFACE] Database returned ${dbResult.emails.length} emails`,
+          `[EMAIL_INTERFACE] Database returned ${dbResult.emails.length} emails for section: ${section}`,
         );
 
-        // If database is empty, fetch from API
-        if (dbResult.emails.length === 0 && reset) {
-          console.log("[EMAIL_INTERFACE] Database is empty, fetching from API");
+        // For Important section, ONLY use DB (no API fetching)
+        // For VIP and All sections, fetch from API if DB is empty
+        const shouldFetchFromAPI =
+          section !== "important" && dbResult.emails.length === 0 && reset;
+
+        if (shouldFetchFromAPI) {
+          console.log(
+            `[EMAIL_INTERFACE] Database is empty for section ${section}, fetching from API`,
+          );
 
           const result = await window.email.getInboxEmails(
             userEmail,
@@ -218,16 +249,31 @@ export default function EmailInterface({
             setDbOffset((prevOffset) => prevOffset + dbResult.emails.length);
           }
 
-          // Only set hasMore to false if database says no more AND we don't have a nextPageToken for API fallback
-          setHasMoreEmails(dbResult.hasMore || !!nextPageToken);
+          // For Important: only DB, no API fallback
+          // For All/VIP: allow API fallback
+          if (section === "important") {
+            setHasMoreEmails(dbResult.hasMore);
+          } else {
+            setHasMoreEmails(dbResult.hasMore || !!nextPageToken);
+          }
         }
       } catch (dbError) {
         console.log(
-          "[EMAIL_INTERFACE] Database error, fetching from API:",
+          `[EMAIL_INTERFACE] Database error for section ${section}:`,
           dbError,
         );
 
-        // If database error, fetch from API
+        // For Important section, don't fetch from API on error
+        if (section === "important") {
+          console.log(
+            "[EMAIL_INTERFACE] Important section - not fetching from API",
+          );
+          setEmails([]);
+          setHasMoreEmails(false);
+          throw dbError;
+        }
+
+        // If database error, fetch from API (for All/VIP sections only)
         const result = await window.email.getInboxEmails(
           userEmail,
           nextPageToken,

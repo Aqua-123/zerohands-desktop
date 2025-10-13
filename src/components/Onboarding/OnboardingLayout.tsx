@@ -1,6 +1,8 @@
 import React from "react";
 import { ReactNode } from "react";
 import { motion } from "framer-motion";
+import zeroHandsLogo from "@/assets/zero hands.svg";
+import onboardingImage from "@/assets/onboarding/image.avif";
 
 interface OnboardingLayoutProps {
   children: ReactNode;
@@ -44,7 +46,7 @@ export default function OnboardingLayout({
             transition={{ duration: 0.6, delay: 0.2 }}
           >
             <img
-              src="/zero hands.svg"
+              src={zeroHandsLogo}
               alt="Onboarding logo"
               className="object-contain"
             />
@@ -72,7 +74,7 @@ export default function OnboardingLayout({
         >
           <div className="absolute inset-0 bg-transparent p-10">
             <motion.img
-              src="/onboarding/image.avif"
+              src={onboardingImage}
               alt="Onboarding background"
               className="h-full w-full rounded-3xl object-cover"
               initial={{ scale: 1.1 }}
