@@ -124,7 +124,7 @@
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^12.23.22",
     "googleapis": "^161.0.0",
-    "i18next": "^25.5.2",
+    "i18next": "^25.6.0",
     "input-otp": "^1.4.2",
     "isomorphic-fetch": "^3.0.0",
     "lexical": "^0.34.0",
