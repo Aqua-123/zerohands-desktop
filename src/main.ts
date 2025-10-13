@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu } from "electron";
 import registerListeners from "./helpers/ipc/listeners-register";
 // "electron-squirrel-startup" seems broken when packaging with vite
 //import started from "electron-squirrel-startup";
@@ -13,6 +13,45 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 const inDevelopment = process.env.NODE_ENV === "development";
+
+function setupMenu() {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+  ];
+
+  if (process.platform === "darwin") {
+    template.unshift({
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    });
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
 
 function createWindow() {
   const preload = path.join(__dirname, "preload.js");
@@ -54,7 +93,11 @@ async function installExtensions() {
   }
 }
 
-app.whenReady().then(createWindow).then(installExtensions);
+app.whenReady().then(() => {
+  setupMenu();
+  createWindow();
+  installExtensions();
+});
 
 //osX only
 app.on("window-all-closed", () => {

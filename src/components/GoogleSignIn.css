@@ -1,0 +1,68 @@
+.signin-buttons {
+    color: #e8f0ff;
+    font-family: "Open Sans", sans-serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-style: normal;
+    font-variation-settings: "wdth" 100;
+    font-size: 1.125rem;
+    line-height: 1.6rem;
+    letter-spacing: 0.01313rem;
+    display: flex;
+    height: 3rem;
+    padding: 0.5rem 1.5rem;
+    justify-content: center;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+    align-self: stretch;
+    cursor: pointer;
+}
+
+@media (min-width: 768px) {
+    .signin-buttons {
+        font-size: 1.5rem;
+        line-height: 2.1rem;
+        height: 5rem;
+    }
+}
+
+.policy-links {
+    color: rgba(48, 48, 48, 0.5);
+    text-align: center;
+    font-family: "Open Sans", sans-serif;
+    font-optical-sizing: auto;
+    font-weight: 400;
+    font-style: normal;
+    font-variation-settings: "wdth" 100;
+    font-size: 0.875rem;
+    line-height: 108%;
+    letter-spacing: -0.024rem;
+}
+
+@media (min-width: 768px) {
+    .policy-links {
+        font-size: 1rem;
+        letter-spacing: -0.028rem;
+    }
+}
+
+.disabled-buttons {
+    color: #6c6c6c;
+    font-family: "Open Sans", sans-serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-style: normal;
+    font-variation-settings: "wdth" 100;
+    font-size: 1.4rem;
+    line-height: 2.1rem;
+    letter-spacing: 0.01313rem;
+}
+
+@media (min-width: 768px) {
+    .disabled-buttons {
+        font-size: 1.5rem;
+        line-height: 2.1rem;
+        height: 5rem;
+    }
+}

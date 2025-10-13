@@ -9,6 +9,7 @@ declare global {
     email: EmailContext;
     calendar: CalendarContext;
     places: PlacesContext;
+    onboarding: OnboardingContext;
   }
 }
 
@@ -25,6 +26,7 @@ interface ElectronWindow {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
   close: () => Promise<void>;
+  openExternal: (url: string) => Promise<void>;
 }
 
 interface OAuthTokens {
@@ -93,7 +95,12 @@ interface OAuthContext {
   outlookRefreshToken: (refreshToken: string) => Promise<OAuthTokens>;
   outlookRevokeToken: (token: string) => Promise<void>;
   onOAuthAuthenticated: (
-    callback: (data: { tokens: OAuthTokens; userInfo: GoogleUserInfo }) => void,
+    callback: (data: {
+      tokens: OAuthTokens;
+      userInfo: GoogleUserInfo;
+      isNewUser?: boolean;
+      provider?: "GOOGLE" | "OUTLOOK";
+    }) => void,
   ) => void;
   onOAuthError: (callback: (error: string) => void) => void;
 }
@@ -280,6 +287,41 @@ interface PlacesContext {
 
   // Error handling
   onPlacesError: (callback: (error: string) => void) => void;
+}
+
+export interface OnboardingFormData {
+  fullName: string;
+  signature: string;
+  tone: string;
+  pronouns: string;
+  vipContacts: string[];
+  vipDomains: string[];
+  smartGroupName: string;
+  smartGroupEmails: string[];
+  companyName: string;
+  companySize: string;
+  positionType: string;
+  importantLabels: string[];
+  securityLabels: string[];
+  spamLabels: string[];
+  userEmail: string;
+}
+
+export interface OnboardingData extends OnboardingFormData {
+  onboardingStep: number;
+  onboardingCompleted: boolean;
+}
+
+interface OnboardingContext {
+  getData: (userEmail: string) => Promise<OnboardingData>;
+  saveData: (
+    userEmail: string,
+    data: Partial<OnboardingFormData> & { onboardingStep: number },
+  ) => Promise<{ success: boolean }>;
+  complete: (
+    userEmail: string,
+    data: OnboardingFormData & { onboardingStep: number },
+  ) => Promise<{ success: boolean }>;
 }
 
 export {};

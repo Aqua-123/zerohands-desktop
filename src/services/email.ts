@@ -113,12 +113,14 @@ export class EmailService {
         newEmails = await this.getGmailIncrementalSync(
           user.accessToken,
           user.id,
+          user.email,
           maxResults,
         );
       } else if (user.provider === AuthProvider.OUTLOOK) {
         newEmails = await this.getOutlookIncrementalSync(
           user.accessToken,
           user.id,
+          user.email,
           maxResults,
         );
       } else {
@@ -164,6 +166,7 @@ export class EmailService {
         allEmails = await this.getGmailInitialSync(
           user.accessToken,
           user.id,
+          user.email,
           dateFilter,
           onProgress,
         );
@@ -171,6 +174,7 @@ export class EmailService {
         allEmails = await this.getOutlookInitialSync(
           user.accessToken,
           user.id,
+          user.email,
           dateFilter,
           onProgress,
         );
@@ -241,6 +245,7 @@ export class EmailService {
   private async getGmailInitialSync(
     accessToken: string,
     userId: string,
+    userEmail: string,
     dateFilter: string,
     onProgress?: (progress: {
       processed: number;
@@ -272,7 +277,7 @@ export class EmailService {
         const threads = listRes.data.threads || [];
         allThreadIds.push(...threads.map((t) => t.id!));
         totalThreads += threads.length;
-        pageToken = listRes.data.nextPageToken;
+        pageToken = listRes.data.nextPageToken || undefined;
 
         console.log(
           `[GMAIL_INITIAL_SYNC] Found ${totalThreads} threads so far...`,
@@ -300,7 +305,7 @@ export class EmailService {
               id,
               format: "full",
             });
-            return this.parseGmailThread(res.data);
+            return this.parseGmailThread(res.data, userEmail);
           } catch (error) {
             console.error(
               `[GMAIL_INITIAL_SYNC] Failed to fetch thread ${id}:`,
@@ -351,6 +356,7 @@ export class EmailService {
   private async getGmailIncrementalSync(
     accessToken: string,
     userId: string,
+    userEmail: string,
     maxResults: number = 50,
   ): Promise<EmailThread[]> {
     const gmail = gmailClientFromAccessToken(accessToken);
@@ -386,7 +392,7 @@ export class EmailService {
               id: t.id,
               format: "full",
             });
-            return this.parseGmailThread(res.data);
+            return this.parseGmailThread(res.data, userEmail);
           } catch (error) {
             console.error(
               `[GMAIL_INC_SYNC] Failed to fetch thread ${t.id}:`,
@@ -455,7 +461,7 @@ export class EmailService {
               id,
               format: "full",
             });
-            return this.parseGmailThread(res.data);
+            return this.parseGmailThread(res.data, userEmail);
           } catch (error) {
             console.error(
               `[GMAIL_INC_SYNC] Failed to fetch thread ${id}:`,
@@ -490,6 +496,7 @@ export class EmailService {
 
   private async getGmailInbox(
     accessToken: string,
+    userEmail: string,
     pageToken?: string,
     maxResults: number = 50,
   ): Promise<{ emails: EmailThread[]; nextPageToken?: string }> {
@@ -519,7 +526,7 @@ export class EmailService {
             id: t.id,
             format: "full",
           });
-          return this.parseGmailThread(thread.data);
+          return this.parseGmailThread(thread.data, userEmail);
         } catch (error) {
           console.error(`[GMAIL_INBOX] Failed to fetch thread ${t.id}:`, error);
           return null;
@@ -624,13 +631,6 @@ export class EmailService {
       .filter(Boolean);
   }
 
-  /**
-   * Batch update labels using individual thread modifications with minimal calls.
-   * - "replace": remove ALL ZEROHANDS_* then add target set (no per-thread reads).
-   * - "add": only add targets.
-   * - "remove": only remove targets (if label exists).
-   */
-  // Utility: dedupe + stable sort for consistent grouping keys
   private uniqSorted = (arr: string[]) => Array.from(new Set(arr)).sort();
 
   private async batchUpdateGmailLabels(
@@ -820,6 +820,7 @@ export class EmailService {
   private async getOutlookInitialSync(
     accessToken: string,
     userId: string,
+    userEmail: string,
     dateFilter: string,
     onProgress?: (progress: {
       processed: number;
@@ -871,10 +872,16 @@ export class EmailService {
           const batch = messageBatches[batchIndex];
           const batchPromises = batch.map(async (message) => {
             try {
-              return await this.parseOutlookMessage(message, accessToken);
+              return await this.parseOutlookMessage(
+                message as OutlookMessageData,
+                accessToken,
+                userEmail,
+              );
             } catch (error) {
               console.error(
-                `[OUTLOOK_INITIAL_SYNC] Failed to parse message ${message.id}:`,
+                `[OUTLOOK_INITIAL_SYNC] Failed to parse message ${
+                  (message as OutlookMessageData).id
+                }:`,
                 error,
               );
               return null;
@@ -927,6 +934,7 @@ export class EmailService {
   private async getOutlookIncrementalSync(
     accessToken: string,
     userId: string,
+    userEmail: string,
     maxResults: number = 50,
   ): Promise<EmailThread[]> {
     const client = graphClientFromAccessToken(accessToken);
@@ -944,7 +952,9 @@ export class EmailService {
 
       const messages: OutlookMessageData[] = data.value || [];
       const parsedMessages = await Promise.all(
-        messages.map((m) => this.parseOutlookMessage(m, accessToken)),
+        messages.map((m) =>
+          this.parseOutlookMessage(m, accessToken, userEmail),
+        ),
       );
       return parsedMessages;
     }
@@ -976,13 +986,14 @@ export class EmailService {
     }
 
     const parsedMessages = await Promise.all(
-      newOnes.map((m) => this.parseOutlookMessage(m, accessToken)),
+      newOnes.map((m) => this.parseOutlookMessage(m, accessToken, userEmail)),
     );
     return parsedMessages;
   }
 
   private async getOutlookInbox(
     accessToken: string,
+    userEmail: string,
     pageToken?: string,
     maxResults: number = 50,
   ): Promise<{ emails: EmailThread[]; nextPageToken?: string }> {
@@ -998,7 +1009,7 @@ export class EmailService {
 
     const emails: EmailThread[] = await Promise.all(
       (data.value as OutlookMessageData[]).map((m) =>
-        this.parseOutlookMessage(m, accessToken),
+        this.parseOutlookMessage(m, accessToken, userEmail),
       ),
     );
 
@@ -1098,9 +1109,19 @@ export class EmailService {
 
     const result =
       user.provider === AuthProvider.GOOGLE
-        ? await this.getGmailInbox(user.accessToken, pageToken, maxResults)
+        ? await this.getGmailInbox(
+            user.accessToken,
+            user.email,
+            pageToken,
+            maxResults,
+          )
         : user.provider === AuthProvider.OUTLOOK
-          ? await this.getOutlookInbox(user.accessToken, pageToken, maxResults)
+          ? await this.getOutlookInbox(
+              user.accessToken,
+              user.email,
+              pageToken,
+              maxResults,
+            )
           : (() => {
               throw new Error("Unsupported email provider");
             })();
@@ -1232,6 +1253,9 @@ export class EmailService {
             uniqueLabels,
           );
 
+          // Update thread importance based on new labels and messages
+          await this.updateThreadImportance(user.id, savedThread.externalId);
+
           email.labels = uniqueLabels;
           onEmailSaved?.(email);
         } catch (e) {
@@ -1247,7 +1271,7 @@ export class EmailService {
   }
 
   async updateMessageLabels(
-    user: { provider: AuthProvider; accessToken: string },
+    user: { id: string; provider: AuthProvider; accessToken: string },
     threadId: string,
     labels: string[],
     operation: "add" | "remove" | "replace" = "replace",
@@ -1267,6 +1291,9 @@ export class EmailService {
         operation,
       );
     }
+
+    // Update thread importance after labels are changed
+    await this.updateThreadImportance(user.id, threadId);
   }
 
   private async updateOutlookMessageLabels(
@@ -1635,6 +1662,11 @@ export class EmailService {
         messageId,
         true,
       );
+
+      // Update thread importance after read status change
+      // Note: This may not change the importance value, but we recalculate to be consistent
+      await this.updateThreadImportance(user.id, messageId);
+
       console.log(
         `[EMAIL_SERVICE] Successfully marked email ${messageId} as read`,
       );
@@ -1672,10 +1704,157 @@ export class EmailService {
     }
   }
 
+  // ---------------- isImportant Calculation ----------------
+
+  /**
+   * Calculate if a thread should be marked as important based on:
+   * 1. HARD NEGATIVE: Last message sent by user -> NOT important
+   * 2. HARD NEGATIVE: Last message is draft -> NOT important
+   * 3. HARD POSITIVE: User has participated in thread -> IS important
+   * 4. CONDITIONAL: Thread has labels (credentials, invoice, meeting, important) -> IS important
+   */
+  private calculateIsImportant(
+    messages: EmailMessage[],
+    labels: string[],
+    userEmail: string,
+    isDraft: boolean = false,
+  ): boolean {
+    // No messages means not important
+    if (!messages || messages.length === 0) {
+      return false;
+    }
+
+    // Get the last message in the thread (most recent)
+    const lastMessage = messages[messages.length - 1];
+
+    // HARD NEGATIVE RULE 1: If last message is sent by user -> NOT important
+    if (lastMessage.senderEmail.toLowerCase() === userEmail.toLowerCase()) {
+      return false;
+    }
+
+    // HARD NEGATIVE RULE 2: If last message is a draft -> NOT important
+    if (isDraft) {
+      return false;
+    }
+
+    // HARD POSITIVE: If user has participated in the thread -> IS important
+    const userParticipated = messages.some(
+      (msg) => msg.senderEmail.toLowerCase() === userEmail.toLowerCase(),
+    );
+    if (userParticipated) {
+      return true;
+    }
+
+    // CONDITIONAL: Check if thread has important labels
+    const importantLabels = ["credentials", "invoice", "meeting", "important"];
+    const hasImportantLabel = labels.some((label) =>
+      importantLabels.includes(label.toLowerCase()),
+    );
+    if (hasImportantLabel) {
+      return true;
+    }
+
+    // Default: not important
+    return false;
+  }
+
+  /**
+   * Updates the isImportant flag for a thread based on its current state
+   */
+  async updateThreadImportance(
+    userId: string,
+    threadId: string,
+  ): Promise<void> {
+    try {
+      const user = await this.databaseService.findUserById(userId);
+      if (!user) {
+        console.error(
+          "[EMAIL_SERVICE] User not found for updateThreadImportance",
+        );
+        return;
+      }
+
+      // Get the thread from database
+      const thread = await this.databaseService.getEmailThreadByExternalId(
+        userId,
+        threadId,
+      );
+      if (!thread) {
+        console.error(
+          `[EMAIL_SERVICE] Thread ${threadId} not found in database`,
+        );
+        return;
+      }
+
+      // Get all messages in the thread
+      const messages = await this.databaseService.getEmailsByThreadId(
+        thread.id,
+        userId,
+      );
+
+      // Convert to EmailMessage format
+      const emailMessages: EmailMessage[] = messages.map((msg) => ({
+        id: msg.externalId,
+        threadId: msg.threadId,
+        subject: msg.subject,
+        sender: msg.sender,
+        senderEmail: msg.senderEmail,
+        recipient: msg.recipient,
+        recipientEmail: msg.recipientEmail,
+        timestamp: msg.timestamp,
+        body: msg.body,
+        htmlBody: msg.htmlBody || undefined,
+        isRead: msg.isRead,
+      }));
+
+      // Get thread labels
+      const threadLabels = thread.labels.map((l) => l.label);
+
+      // Check if thread is a draft (in Gmail, check for DRAFT label)
+      const isDraft = threadLabels.some((label) =>
+        label.toUpperCase().includes("DRAFT"),
+      );
+
+      // Calculate isImportant
+      const isImportant = this.calculateIsImportant(
+        emailMessages,
+        threadLabels,
+        user.email,
+        isDraft,
+      );
+
+      // Update the thread if isImportant has changed
+      if (thread.isImportant !== isImportant) {
+        await this.databaseService.upsertEmailThread({
+          externalId: thread.externalId,
+          subject: thread.subject,
+          sender: thread.sender,
+          senderEmail: thread.senderEmail,
+          preview: thread.preview,
+          timestamp: thread.timestamp,
+          isRead: thread.isRead,
+          isImportant,
+          hasAttachments: thread.hasAttachments,
+          userId: thread.userId,
+        });
+
+        console.log(
+          `[EMAIL_SERVICE] Updated isImportant for thread ${threadId}: ${isImportant}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[EMAIL_SERVICE] Error updating thread importance for ${threadId}:`,
+        error,
+      );
+    }
+  }
+
   // ---------------- Parsers ----------------
 
   private parseGmailThread(
     threadData: gmail_v1.Schema$Thread,
+    userEmail?: string,
   ): EmailThread | null {
     try {
       if (!threadData.messages || threadData.messages.length === 0) {
@@ -1708,11 +1887,6 @@ export class EmailService {
         (msg.labelIds || []).includes("UNREAD"),
       );
 
-      // Check if any message in the thread is important
-      const isImportant = threadData.messages.some((msg) =>
-        (msg.labelIds || []).includes("IMPORTANT"),
-      );
-
       // Check if any message in the thread has attachments
       const hasAttachments = threadData.messages.some(
         (msg) =>
@@ -1743,6 +1917,27 @@ export class EmailService {
             );
           }
         }
+      }
+
+      // Check if thread is a draft
+      const isDraft = Array.from(allLabels).some((label) =>
+        label.toUpperCase().includes("DRAFT"),
+      );
+
+      // Calculate isImportant using the new logic if userEmail is provided
+      let isImportant = false;
+      if (userEmail && messages.length > 0) {
+        isImportant = this.calculateIsImportant(
+          messages,
+          Array.from(allLabels),
+          userEmail,
+          isDraft,
+        );
+      } else {
+        // Fallback to old logic if userEmail is not provided
+        isImportant = threadData.messages.some((msg) =>
+          (msg.labelIds || []).includes("IMPORTANT"),
+        );
       }
 
       return {
@@ -1815,6 +2010,7 @@ export class EmailService {
   private async parseOutlookMessage(
     messageData: OutlookMessageData,
     accessToken?: string,
+    userEmail?: string,
   ): Promise<EmailThread> {
     const from = messageData.from?.emailAddress || {};
     const senderName = from.name || from.address || "Unknown";
@@ -1825,6 +2021,28 @@ export class EmailService {
       messageData,
       accessToken,
     );
+
+    // Get labels from Outlook categories (prefixed with ZEROHANDS_)
+    const labels = (messageData.categories || [])
+      .filter((cat) => cat.startsWith("ZEROHANDS_"))
+      .map((cat) => cat.replace("ZEROHANDS_", ""));
+
+    // Check if message is a draft (Outlook has no explicit draft flag in the message object in this context)
+    const isDraft = false; // Outlook drafts are typically in a separate folder
+
+    // Calculate isImportant using the new logic if userEmail is provided
+    let isImportant = false;
+    if (userEmail) {
+      isImportant = this.calculateIsImportant(
+        [message],
+        labels,
+        userEmail,
+        isDraft,
+      );
+    } else {
+      // Fallback to old logic if userEmail is not provided
+      isImportant = messageData.importance === "high";
+    }
 
     return {
       id: messageData.id,
@@ -1837,7 +2055,7 @@ export class EmailService {
         : "",
       timestamp: new Date(messageData.receivedDateTime),
       isRead: messageData.isRead,
-      isImportant: messageData.importance === "high",
+      isImportant,
       hasAttachments: messageData.hasAttachments,
       messages: [message], // Include the individual message
     };

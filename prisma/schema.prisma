@@ -8,25 +8,42 @@ datasource db {
 }
 
 model User {
-  id                String        @id @default(cuid())
-  email             String        @unique
-  name              String
-  picture           String?
-  provider          AuthProvider
-  providerId        String
-  accessToken       String
-  refreshToken      String?
-  tokenExpiry       DateTime?
-  scope             String
-  verifiedEmail     Boolean       @default(false)
+  id                  String        @id @default(cuid())
+  email               String        @unique
+  name                String
+  picture             String?
+  provider            AuthProvider
+  providerId          String
+  accessToken         String
+  refreshToken        String?
+  tokenExpiry         DateTime?
+  scope               String
+  verifiedEmail       Boolean       @default(false)
   // Sync state fields for incremental sync
-  gmailHistoryId    String? // Gmail's historyId for incremental sync
-  outlookDeltaToken String? // Outlook's delta token for incremental sync
-  lastSyncTime      DateTime? // Last successful sync timestamp
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  emails            Email[]
-  emailThreads      EmailThread[]
+  gmailHistoryId      String? // Gmail's historyId for incremental sync
+  outlookDeltaToken   String? // Outlook's delta token for incremental sync
+  lastSyncTime        DateTime? // Last successful sync timestamp
+  // Onboarding fields
+  onboardingCompleted Boolean       @default(false)
+  onboardingStep      Int           @default(1)
+  fullName            String?
+  signature           String?
+  tone                String?
+  pronouns            String?
+  vipContacts         String? // JSON string array
+  vipDomains          String? // JSON string array
+  smartGroupName      String?
+  smartGroupEmails    String? // JSON string array
+  companyName         String?
+  companySize         String?
+  positionType        String?
+  importantLabels     String? // JSON string array
+  securityLabels      String? // JSON string array
+  spamLabels          String? // JSON string array
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  emails              Email[]
+  emailThreads        EmailThread[]
 
   @@unique([provider, providerId])
 }

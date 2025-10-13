@@ -19,7 +19,7 @@ function EmailsPage() {
   }
 
   return (
-    <AuthGuard requireAuth={true}>
+    <AuthGuard requireAuth={true} requireOnboarding={true}>
       <div className="h-full">
         <EmailInterface userEmail={user.email} userProvider={user.provider} />
       </div>

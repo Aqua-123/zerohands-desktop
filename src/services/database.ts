@@ -28,6 +28,22 @@ export interface UpdateUserData {
   tokenExpiry?: Date;
   scope?: string;
   verifiedEmail?: boolean;
+  onboardingCompleted?: boolean;
+  onboardingStep?: number;
+  fullName?: string;
+  signature?: string;
+  tone?: string;
+  pronouns?: string;
+  vipContacts?: string | null;
+  vipDomains?: string | null;
+  smartGroupName?: string;
+  smartGroupEmails?: string | null;
+  companyName?: string;
+  companySize?: string;
+  positionType?: string;
+  importantLabels?: string | null;
+  securityLabels?: string | null;
+  spamLabels?: string | null;
 }
 
 export interface CreateEmailThreadData {

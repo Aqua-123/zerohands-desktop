@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 // const baseURL = 'http://192.168.0.175:9000/v1';
-const actualURL = "https://astraos-ai.futurixai.com/v1";
+const actualURL = "https://glm_model.futurixai.com/v1";
 
 const ShivaayProvider = createOpenAICompatible({
   name: "Shivaay",

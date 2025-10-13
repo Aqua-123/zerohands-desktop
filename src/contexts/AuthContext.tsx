@@ -6,6 +6,7 @@ import React, {
   ReactNode,
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import type { OAuthTokens, GoogleUserInfo } from "@/services/oauth";
 
 export interface AuthUser {
   id: string;
@@ -91,6 +92,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         tokens: OAuthTokens;
         userInfo: GoogleUserInfo;
         isNewUser?: boolean;
+        provider?: "GOOGLE" | "OUTLOOK";
       }) => {
         if (data.userInfo) {
           const authUser: AuthUser = {
@@ -98,11 +100,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
             email: data.userInfo.email,
             name: data.userInfo.name,
             picture: data.userInfo.picture,
-            provider: data.userInfo.provider || "GOOGLE", // Default to Google if not specified
+            provider: data.provider || "GOOGLE", // Default to GOOGLE for backwards compatibility
           };
           signIn(authUser);
 
-          // Trigger initial sync for new users
+          // Check onboarding status
+          try {
+            const onboardingData = await window.onboarding.getData(
+              data.userInfo.email,
+            );
+
+            if (!onboardingData.onboardingCompleted) {
+              // Redirect to onboarding if not completed
+              navigate({ to: "/onboarding" });
+              return; // IMPORTANT: Stop here, don't continue to emails
+            }
+          } catch (error) {
+            console.error("Error checking onboarding status:", error);
+            // If there's an error, redirect to onboarding as a safe default
+            navigate({ to: "/onboarding" });
+            return;
+          }
+
+          // Trigger initial sync for new users (only if onboarding is completed)
           if (data.isNewUser && window.email) {
             console.log("New user detected, starting initial sync...");
             try {

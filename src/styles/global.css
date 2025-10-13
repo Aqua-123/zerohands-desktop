@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap');
 @import "tailwindcss";
 
 @plugin 'tailwindcss-animate';
@@ -35,6 +36,9 @@
   --font-sans: Geist, sans-serif;
   --font-mono: Geist Mono, monospace;
   --font-tomorrow: Tomorrow, sans-serif;
+  --font-louize: Louize, sans-serif;
+  --font-romana: OPTIRomanaRoman, serif;
+  --font-open-sans: "Open Sans", sans-serif;
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -47,14 +51,17 @@
     from {
       height: 0;
     }
+
     to {
       height: var(--radix-accordion-content-height);
     }
   }
+
   @keyframes accordion-up {
     from {
       height: var(--radix-accordion-content-height);
     }
+
     to {
       height: 0;
     }
@@ -64,10 +71,12 @@
 @utility container {
   margin-inline: auto;
   padding-inline: 2rem;
-  @media (width >= --theme(--breakpoint-sm)) {
+
+  @media (width >=--theme(--breakpoint-sm)) {
     max-width: none;
   }
-  @media (width >= 1400px) {
+
+  @media (width >=1400px) {
     max-width: 1400px;
   }
 }
@@ -78,6 +87,7 @@
 
     src: url("../assets/fonts/geist/geist.ttf") format("truetype");
   }
+
   @font-face {
     font-family: "Geist Mono";
     font-display: swap;
@@ -92,6 +102,7 @@
 
     src: url("../assets/fonts/tomorrow/tomorrow-regular.ttf") format("truetype");
   }
+
   @font-face {
     font-family: "Tomorrow";
     font-weight: 400;
@@ -99,6 +110,7 @@
 
     src: url("../assets/fonts/tomorrow/tomorrow-italic.ttf") format("truetype");
   }
+
   @font-face {
     font-family: "Tomorrow";
     font-weight: 700;
@@ -106,13 +118,27 @@
 
     src: url("../assets/fonts/tomorrow/tomorrow-bold.ttf") format("truetype");
   }
+
   @font-face {
     font-family: "Tomorrow";
     font-weight: 700;
     font-style: italic;
 
-    src: url("../assets/fonts/tomorrow/tomorrow-bold-italic.ttf")
-      format("truetype");
+    src: url("../assets/fonts/tomorrow/tomorrow-bold-italic.ttf") format("truetype");
+  }
+
+  @font-face {
+    font-family: "Louize";
+    font-display: swap;
+
+    src: url("../assets/fonts/Louize.ttf") format("truetype");
+  }
+
+  @font-face {
+    font-family: "OPTIRomanaRoman";
+    font-display: swap;
+
+    src: url("../assets/fonts/OPTIRomanaRoman-Normal.otf") format("opentype");
   }
 }
 
@@ -184,10 +210,12 @@
   body {
     @apply overflow-hidden;
   }
+
   .draglayer {
     @apply bg-background;
     -webkit-app-region: drag;
   }
+
   button {
     @apply cursor-pointer;
   }
@@ -197,6 +225,7 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
@@ -240,6 +269,7 @@
     from {
       height: 0;
     }
+
     to {
       height: var(--radix-accordion-content-height);
     }
@@ -249,6 +279,7 @@
     from {
       height: var(--radix-accordion-content-height);
     }
+
     to {
       height: 0;
     }

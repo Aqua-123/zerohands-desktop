@@ -44,6 +44,7 @@ export function registerOAuthListeners(mainWindow: BrowserWindow) {
       mainWindow.webContents.send(OAUTH_CHANNELS.OAUTH_AUTHENTICATED, {
         ...result,
         isNewUser,
+        provider: "GOOGLE",
       });
 
       return result;
@@ -113,6 +114,7 @@ export function registerOAuthListeners(mainWindow: BrowserWindow) {
       mainWindow.webContents.send(OAUTH_CHANNELS.OAUTH_AUTHENTICATED, {
         ...result,
         isNewUser,
+        provider: "OUTLOOK",
       });
 
       return result;
